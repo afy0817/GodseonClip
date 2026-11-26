@@ -1,11 +1,12 @@
 //! Runs FFmpeg jobs: progress from `-progress pipe:1`, cancel with `q`, `.part` file until success.
 //! A job may have several attempts (a hardware encoder, then software): the next one runs only
 //! when the previous one failed. Or several steps (a lossless cut: one stream copy per kept piece,
-//! then the join): the next one runs only when the previous one succeeded.
+//! then the join; a GIF: its palette, then its frames): the next one runs only when the previous one
+//! succeeded.
 
 use crate::command::{self, LosslessCutPlan};
 use crate::msg::Msg;
-use crate::probe::{self, VideoStream};
+use crate::probe::{self, MediaInfo, VideoStream};
 use crate::util::{last_line, new_command, run_capture};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -579,8 +580,9 @@ pub fn check_joins(ffmpeg: &Path, input: &Path, video: &VideoStream, plan: &Loss
     Ok(())
 }
 
-/// The steps of a lossless cut of more than one piece, ready for [`JobManager::start_steps`].
-pub struct CutJob {
+/// The steps of a job of several FFmpeg runs — a lossless cut of more than one piece, a GIF —
+/// ready for [`JobManager::start_steps`].
+pub struct StepsJob {
     pub steps: Vec<Step>,
     /// Created by the first step, right before it runs (a queued job leaves nothing on disk while it
     /// waits); the job removes it when it ends.
@@ -602,7 +604,7 @@ pub fn lossless_cut_job(
     final_path: &Path,
     part: &Path,
     tag: &str,
-) -> Result<CutJob, Msg> {
+) -> Result<StepsJob, Msg> {
     let extension = final_path.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
     let names = (0..plan.pieces.len()).map(|i| command::piece_name(i, &extension)).collect::<Result<Vec<_>, _>>()?;
     let scratch = command::cut_scratch_dir(final_path, tag);
@@ -643,7 +645,55 @@ pub fn lossless_cut_job(
             Ok(concat)
         }),
     });
-    Ok(CutJob { steps, scratch, command_line: lines.join("\n") })
+    Ok(StepsJob { steps, scratch, command_line: lines.join("\n") })
+}
+
+// ---------------------------------------------------------------------------------------------
+// GIF (command::GifPass): the palette, then the frames.
+
+/// What a GIF is made of: the editor's 자르기 or 구간 제거, planned as a precise export to GIF.
+pub enum GifSource<'a> {
+    Trim { video: &'a VideoStream, plan: &'a command::PreciseTrimPlan },
+    Cut { info: &'a MediaInfo, plan: &'a command::PreciseCutPlan },
+}
+
+/// A GIF's two runs: the palette into a scratch folder next to the result (`tag` names it, made
+/// right before the first run), then the frames into `part`. Each run reads the whole picture, so
+/// they weigh the same. Nothing is written until the job runs.
+pub fn gif_job(
+    ffmpeg: &Path,
+    input: &Path,
+    source: GifSource,
+    quality: command::Quality,
+    final_path: &Path,
+    part: &Path,
+    tag: &str,
+) -> Result<StepsJob, Msg> {
+    let scratch = command::gif_scratch_dir(final_path, tag);
+    let palette = scratch.join("palette.png");
+    let args = |pass| match &source {
+        GifSource::Trim { video, plan } => command::gif_trim_args(input, video, plan, quality, pass, &palette, part),
+        GifSource::Cut { info, plan } => command::gif_cut_args(input, info, plan, quality, pass, &palette, part),
+    };
+    let first = args(command::GifPass::Palette)?;
+    let second = args(command::GifPass::Frames)?;
+    let length = match &source {
+        GifSource::Trim { plan, .. } => plan.duration,
+        GifSource::Cut { plan, .. } => plan.duration,
+    };
+    let command_line = [&first, &second].map(|a| command::display_command(ffmpeg, a)).join("\n");
+    let folder = scratch.clone();
+    let steps = vec![
+        Step {
+            args: Box::new(move || {
+                std::fs::create_dir(&folder).map_err(|e| Msg::TempFolderFailed { detail: e.to_string() })?;
+                Ok(first)
+            }),
+            weight: length,
+        },
+        Step { args: Box::new(move || Ok(second)), weight: length },
+    ];
+    Ok(StepsJob { steps, scratch, command_line })
 }
 
 #[cfg(test)]

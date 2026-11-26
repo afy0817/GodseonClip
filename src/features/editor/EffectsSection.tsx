@@ -265,7 +265,7 @@ function sizeText(t: Messages, e: Effects, planned: Planned, crop: Size, src: Si
 }
 
 /** A whole number typed; Enter or leaving the field commits it, Escape restores it. */
-function NumberField({ label, value, onCommit }: { label: string; value: number; onCommit: (n: number) => void }) {
+export function NumberField({ label, value, onCommit }: { label: string; value: number; onCommit: (n: number) => void }) {
   const [draft, setDraft] = useState(String(value));
   useEffect(() => setDraft(String(value)), [value]);
   const commit = () => {

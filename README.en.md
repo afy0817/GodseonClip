@@ -8,7 +8,7 @@
 
 ![GodseonClip editor (English UI)](docs/images/english.png)
 
-GodseonClip is a desktop app that **trims video losslessly in seconds** or **cuts it frame-accurately and shrinks it to H.265 · AV1** (Precise). Picture effects (crop · rotate · output size · mosaic · blur · picture in picture), batch conversion with estimated sizes, and a job queue all live in one window. It never overwrites the original file.
+GodseonClip is a desktop app that **trims video losslessly in seconds** or **cuts it frame-accurately and shrinks it to H.265 · AV1 or makes a GIF** (Precise). Picture effects (crop · rotate · output size · mosaic · blur · picture in picture), batch conversion with estimated sizes, and a job queue all live in one window. It never overwrites the original file.
 
 - Tauri 2 + React 19 / TypeScript + Rust
 - Video is processed by **the FFmpeg 6.0+ you install** (not bundled — see [below](#before-you-start-install-ffmpeg))
@@ -27,13 +27,14 @@ GodseonClip is a desktop app that **trims video losslessly in seconds** or **cut
   - [1. Open a file](#1-open-a-file)
   - [2. Trim](#2-trim)
   - [3. Cut out](#3-cut-out)
-  - [4. Picture effects — crop · rotate · output size](#4-picture-effects--crop--rotate--output-size)
-  - [5. Mosaic · blur](#5-mosaic--blur)
-  - [6. Picture in picture · logo](#6-picture-in-picture--logo)
-  - [7. Batch convert + estimated size](#7-batch-convert--estimated-size)
-  - [8. Queue · notifications](#8-queue--notifications)
-  - [9. FFmpeg settings](#9-ffmpeg-settings)
-  - [10. Korean / English](#10-korean--english)
+  - [4. GIF · frame rate](#4-gif--frame-rate)
+  - [5. Picture effects — crop · rotate · output size](#5-picture-effects--crop--rotate--output-size)
+  - [6. Mosaic · blur](#6-mosaic--blur)
+  - [7. Picture in picture · logo](#7-picture-in-picture--logo)
+  - [8. Batch convert + estimated size](#8-batch-convert--estimated-size)
+  - [9. Queue · notifications](#9-queue--notifications)
+  - [10. FFmpeg settings](#10-ffmpeg-settings)
+  - [11. Korean / English](#11-korean--english)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Originals and output files](#originals-and-output-files)
 - [Development](#development)
@@ -46,7 +47,9 @@ GodseonClip is a desktop app that **trims video losslessly in seconds** or **cut
 |---|---|
 | Trim | Keep one part (IN / OUT). Lossless copies streams in seconds at keyframes; Precise re-encodes frame-accurately |
 | Cut out | Mark several parts to remove and join the rest (drop ads, mistakes) |
-| Codecs | Original (stream copy) · H.265 · AV1, quality presets High / Balanced / Small |
+| Codecs | Original (stream copy) · H.265 · AV1 · GIF, quality presets High / Balanced / Small |
+| GIF | The trimmed part as an animated GIF — frame rate (15 fps by default) · size (360p by default) · a 256-color palette made for the clip, picture effects included |
+| Frame rate | Bring Precise exports and batch conversions down to 60 · 30 · 24 fps and so on (never above the original) |
 | Hardware encoding | VideoToolbox (macOS) · NVENC · QSV · AMF (Windows) · VAAPI (Linux), falls back to a CPU encoder on failure |
 | Picture effects | Crop (fixed ratios) · 90° rotation · mirror / upside down · output size (1080p · 720p · 480p · custom) |
 | Mosaic · blur | Up to 20 boxes, each with its kind · strength · time range |
@@ -114,7 +117,7 @@ Click **Open File** in the header, or drop a video from Finder or Explorer onto 
 2. Pick a mode under **Export** in the right panel.
    - **Lossless** — copies the streams without re-encoding. Even 4K × 10 minutes takes about a second, but the start snaps to a keyframe. MP4 · MOV get an edit list so playback starts at the IN frame.
    - **Precise** — cuts exactly from the IN frame to the frame just before OUT, and re-encodes.
-3. Video codec: **Original** (stream copy) · **H.265** · **AV1**. Choosing H.265 · AV1 or turning on a picture effect switches the mode to Precise. Quality is **High** (for keeping) · **Balanced** (default) · **Small** (for sharing) — values tuned with VMAF so every encoder gives the same quality.
+3. Video codec: **Original** (stream copy) · **H.265** · **AV1** · **GIF** ([below](#4-gif--frame-rate)). Choosing H.265 · AV1 · GIF or turning on a picture effect switches the mode to Precise. Quality is **High** (for keeping) · **Balanced** (default) · **Small** (for sharing) — values tuned with VMAF so every encoder gives the same quality. Precise can also bring the **Frame rate** down.
 4. **Export** adds a job to the queue, and you can open another file right away. The result is saved next to the original as `name_trim_h265.mp4` and so on.
 
 ### 3. Cut out
@@ -127,7 +130,18 @@ Choose **Cut out** in the header to mark several parts to remove.
 2. Drag a part's edges on the timeline to adjust it. Pick a part in the panel list to jump to its start, and press <kbd>Delete</kbd> to remove it. Overlapping parts are merged automatically.
 3. The summary under the list shows original · removed · result lengths. A Precise export cuts every kept part frame-accurately and joins them. Lossless works too, but a short part with no keyframe inside can't be removed, and kept parts may start at the keyframe before — the panel tells you the difference beforehand.
 
-### 4. Picture effects — crop · rotate · output size
+### 4. GIF · frame rate
+
+Pick **GIF** as the video codec in Trim or Cut out and the chosen part is saved as an animated GIF (`name_trim.gif` · `name_cut.gif`, `name.gif` for the whole file). The mode switches to Precise, there is no sound, and picture effects (crop · rotate · mosaic · picture in picture …) come along.
+
+- **Frame rate** — Original · 25 · 15 (default) · 10 · Custom (1–50 fps). A GIF stores frame lengths in hundredths of a second, and browsers play frames shorter than 2/100 s slowly, so it goes up to 50 fps (Original keeps the original's rate, 50 above that).
+- **GIF size** — Original · 480p · 360p (default) · 240p (short side, never enlarged), made from the picture after the picture effects' output size. A larger size and frame rate make the file much bigger.
+- **Quality** — High (256 colors · smooth dithering) · Balanced (256 colors · only changed areas rewritten) · Small (128 colors · pattern dithering).
+- Two FFmpeg runs — first a palette made for this clip, then the frames — so even a long GIF needs little memory (the original is read twice).
+
+Precise exports to H.264 · H.265 · AV1 can bring the **Frame rate** down too — Original · 60 · 30 · 24 · Custom (1–120 fps) — and batch convert's advanced settings have the same **Frame rate** (Keep original · bring down to 60 · 30 · 24 fps). It never goes above the original (30 on a 60 fps video gives 30 fps, a 25 fps video stays as it is), and every frame of the result is the original's frame on screen at that moment — the result still starts on the IN frame and the sound stays in sync.
+
+### 5. Picture effects — crop · rotate · output size
 
 ![Crop 9:16 → move the box → Result view](docs/images/effects.gif)
 
@@ -138,7 +152,7 @@ The **Picture** section of the panel. Turning on an effect switches the export t
 - **Output size** — Original · 1080p · 720p · 480p (short side, never enlarged) or Custom W × H with Fit (black bars) / Fill (edges cut) / Stretch.
 - The **Editing / Result** buttons at the top right of the stage preview exactly what will be exported.
 
-### 5. Mosaic · blur
+### 6. Mosaic · blur
 
 ![Mosaic box → strength → blur](docs/images/mask.gif)
 
@@ -150,7 +164,7 @@ For faces, license plates, personal details and anything else to hide.
 
 The editing view previews it close to the real result.
 
-### 6. Picture in picture · logo
+### 7. Picture in picture · logo
 
 ![PiP video position · size · opacity · sound, and a logo image](docs/images/pip.gif)
 
@@ -162,7 +176,7 @@ Lay up to 4 other videos (picture in picture) or images (logo · watermark, PNG 
 4. A video's sound is off by default; **Mix its sound** adds it at the chosen **Volume** for that range only.
 5. Overlays stay upright in the result even when the picture is rotated or flipped.
 
-### 7. Batch convert + estimated size
+### 8. Batch convert + estimated size
 
 ![Batch convert: estimated sizes → Start Converting → Queue](docs/images/convert.gif)
 
@@ -171,11 +185,11 @@ Lay up to 4 other videos (picture in picture) or images (logo · watermark, PNG 
 **Batch convert** in the header shrinks many files to H.265 / AV1 at once.
 
 1. **Add Files · Add Folders**, or drop them. Folders are searched for videos including subfolders (up to 1000).
-2. Set things up on the right: output codec (H.265 / AV1) · encoder (Auto = hardware first, CPU if it fails · or a specific one) · quality · container (MP4 · MKV · MOV for H.265, MP4 · MKV · WebM for AV1) · resolution (scale down to 1080 / 720 short side) · audio · 10-bit · skip files already in the output codec · save location · name ending (`_h265` · `_av1` by default).
+2. Set things up on the right: output codec (H.265 / AV1) · encoder (Auto = hardware first, CPU if it fails · or a specific one) · quality · container (MP4 · MKV · MOV for H.265, MP4 · MKV · WebM for AV1) · resolution (scale down to 1080 / 720 short side) · frame rate (bring down to 60 / 30 / 24 fps) · audio · 10-bit · skip files already in the output codec · save location · name ending (`_h265` · `_av1` by default).
 3. The **Est. size** column fills in file by file: three 10-second parts (at 1/6 · 1/2 · 5/6) are test-encoded with the same settings (the whole file if it's 45 s or shorter), and the total below shows the savings. Tests pause while the queue runs and run again when settings change.
 4. **Start Converting** makes one queue job per file, and each row's status follows its job.
 
-### 8. Queue · notifications
+### 9. Queue · notifications
 
 ![Queue](docs/images/queue.png)
 
@@ -190,7 +204,7 @@ The bell in the header is **Notifications** — running, waiting and just-finish
 
 <img src="docs/images/notify.png" width="700" alt="Notifications panel">
 
-### 9. FFmpeg settings
+### 10. FFmpeg settings
 
 ![FFmpeg settings](docs/images/setup.png)
 
@@ -201,7 +215,7 @@ The settings button at the right end of the header.
 - **Set the Path Yourself** — pick an ffmpeg you already have; once it checks out it's saved and tried first from the next start. If it disappears or drops below 6.0, the app goes back to searching automatically and tells you.
 - **Diagnostics** at the bottom is a developer check screen (file info · playback support · encoders · lossless trim).
 
-### 10. Korean / English
+### 11. Korean / English
 
 Pick System · 한국어 · English under **언어 · Language** at the top of the settings screen. It changes at once without a restart — even error messages already on screen switch language. The default follows the OS language (English unless Korean comes first).
 

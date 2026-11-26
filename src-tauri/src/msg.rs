@@ -80,6 +80,10 @@ pub enum Msg {
     TempFolderFailed { detail: String },
     /// 화면 효과 need re-encoding (무손실 was asked with effects).
     EffectsNeedPrecise,
+    /// A 프레임레이트 needs re-encoding (무손실 was asked with one).
+    FrameRateNeedsPrecise,
+    /// 프레임레이트 outside `min` … `max` frames per second (a GIF's `max` is lower).
+    FrameRateOutOfRange { min: u32, max: u32 },
     /// The crop box is not inside the `width` × `height` (upright) picture.
     CropOutsidePicture { width: u32, height: u32 },
     CropTooSmall { min: u32 },

@@ -19,7 +19,7 @@ import { type EffectsNote, EffectsSection } from "./EffectsSection";
 import { ExportFooter, type ExportProps, ExportSection } from "./ExportSection";
 import { MaskSection } from "./MaskSection";
 import { OverlaySection } from "./OverlaySection";
-import { DEFAULT_EXPORT, type EditorMode, encoderFor, type ExportChoice, isWholeFile, targetCodec } from "./exportOptions";
+import { DEFAULT_EXPORT, type EditorMode, encoderFor, type ExportChoice, isWholeFile, requestOptions, targetCodec } from "./exportOptions";
 import { frameStart, mediaSummary, stepFrame, typedFrameStart } from "./format";
 import { FolderIcon } from "./icons";
 import { losslessCutPreview } from "./losslessCut";
@@ -411,7 +411,8 @@ export function EditorScreen({ active, ffmpeg, mode, onKind, queue, queueCount, 
     } else if (c.mode !== choice.mode) setFxNote(null);
     setExportChoice(c);
   };
-  const exportEncoders = useExportEncoders(precise && ffmpeg.ready, ffmpeg.path, active);
+  // A GIF uses FFmpeg's own encoder: no encoder test to wait for.
+  const exportEncoders = useExportEncoders(precise && choice.codec !== "gif" && ffmpeg.ready, ffmpeg.path, active);
   const encoderReady = !precise || encoderFor(exportEncoders.encoders, targetCodec(choice.codec, v?.codec)) !== null;
   const editReady = cutMode
     ? v !== null && cuts.removed.length > 0 && keep.length > 0 && (losslessCut?.problem ?? null) === null
@@ -437,7 +438,7 @@ export function EditorScreen({ active, ffmpeg, mode, onKind, queue, queueCount, 
       const edit = cutMode
         ? { kind: "cut" as const, removed: cuts.removed }
         : { kind: "trim" as const, start: range.start, end: range.end };
-      const item = await api.queueExport({ path: info.path, edit, ...choice, effects: precise ? effects : NO_EFFECTS });
+      const item = await api.queueExport({ path: info.path, edit, ...requestOptions(choice), effects: precise ? effects : NO_EFFECTS });
       seenInQueue.current = false;
       setQueued(item);
       setFollowedId(item.id);
@@ -454,6 +455,7 @@ export function EditorScreen({ active, ffmpeg, mode, onKind, queue, queueCount, 
     onChoice: changeChoice,
     effectsOn,
     picture: precise ? (planned.plan?.size ?? null) : null,
+    shown: v ? (planned.plan?.size ?? uprightSize(v)) : null,
     editor: mode,
     encoders: exportEncoders,
     length: resultLength,

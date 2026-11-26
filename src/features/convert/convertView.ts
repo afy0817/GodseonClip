@@ -21,6 +21,7 @@ import { say } from "../../lib/i18n/text.ts";
 import { formatBytes } from "../../lib/time.ts";
 import { wantsTenBit } from "../editor/exportOptions.ts";
 import { codecLabel, formatClock } from "../editor/format.ts";
+import { rateText, resultRate, VIDEO_RATES } from "../editor/frameRate.ts";
 
 export type ConvertCodec = "hevc" | "av1";
 
@@ -32,6 +33,8 @@ export interface ConvertChoice {
   quality: Quality;
   container: Container;
   resolution: Resolution;
+  /** 프레임레이트: at most this many fps (never more than a file has); null: 원본 유지. */
+  frameRate: number | null;
   audio: AudioChoice;
   tenBit: boolean;
   /** 출력과 같은 코덱인 파일 건너뛰기. */
@@ -48,6 +51,7 @@ export const DEFAULT_CONVERT: ConvertChoice = {
   quality: "balanced",
   container: "mp4",
   resolution: "source",
+  frameRate: null,
   audio: "copyOrAac",
   tenBit: false,
   skipSame: true,
@@ -80,6 +84,11 @@ export function resolutions(t: Messages): { value: Resolution; label: string }[]
   return RESOLUTION_VALUES.map((value) => ({ value, label: t.convert.resolution[value] }));
 }
 
+/** 원본 유지 · 60 · 30 · 24 fps로 줄이기 (the editor's video presets). */
+export function frameRates(t: Messages): { value: number | null; label: string }[] {
+  return [{ value: null, label: t.convert.frameRate.source }, ...VIDEO_RATES.map((n) => ({ value: n, label: t.convert.frameRate.cap(n) }))];
+}
+
 export function audioChoices(t: Messages): { value: AudioChoice; label: string }[] {
   return AUDIO_VALUES.map((value) => ({ value, label: t.convert.audio[value] }));
 }
@@ -110,6 +119,7 @@ export function toSettings(choice: ConvertChoice): ConvertSettings {
     resolution: choice.resolution,
     audio: choice.audio,
     tenBit: choice.tenBit,
+    frameRate: choice.frameRate,
     encoder: choice.encoder,
     quality: choice.quality,
     outputDir: choice.outputDir,
@@ -273,6 +283,8 @@ export function planNotes(t: Messages, info: MediaInfo, choice: ConvertChoice): 
   const notes: string[] = [];
   const size = downscaledSize(v, choice.resolution);
   if (size) notes.push(t.queueView.scaledTo(size[0], size[1]));
+  const rate = resultRate(v, choice.frameRate, false);
+  if (rate !== null) notes.push(w.toFrameRate(rateText(rate)));
   if (v.hdr) notes.push(w.keepsHdr);
   else if (wantsTenBit(info)) notes.push(w.keepsTenBit);
   else if (choice.tenBit) notes.push(w.toTenBit);

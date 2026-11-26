@@ -811,6 +811,7 @@ mod tests {
                 ten_bit: true,
                 hdr: false,
                 scaled: Some([1280, 720]),
+                frame_rate: None,
                 audio: command::AudioOut::Opus { bitrate: 128 },
                 container: command::Container::Webm,
             },
@@ -826,7 +827,7 @@ mod tests {
                 "quality": "balanced",
                 "summary": {
                     "length": 12.5, "codec": "av1", "encoder": "SVT-AV1", "fallback": null, "tenBit": true, "hdr": false,
-                    "scaled": [1280, 720], "audio": {"kind": "opus", "bitrate": 128}, "container": "webm"
+                    "scaled": [1280, 720], "frameRate": null, "audio": {"kind": "opus", "bitrate": 128}, "container": "webm"
                 },
                 "estimatedBytes": 1_500_000_000u64
             })

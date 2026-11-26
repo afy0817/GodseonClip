@@ -33,6 +33,7 @@ import {
   estimateLine,
   estimateSettingsKey,
   estimateTotals,
+  frameRates,
   lengthCell,
   listHeading,
   listTotals,
@@ -433,6 +434,24 @@ export function ConvertScreen({ active, ffmpeg, queue, onKind, onOpenQueue, onOp
                       ))}
                     </select>
                   </div>
+                </div>
+                <div className="ed-group">
+                  <label className="ed-label" htmlFor="cv-frame-rate">
+                    {w.frameRate}
+                  </label>
+                  <select
+                    id="cv-frame-rate"
+                    className="cv-select"
+                    value={choice.frameRate === null ? "" : String(choice.frameRate)}
+                    onChange={(e) => set({ frameRate: e.target.value === "" ? null : Number(e.target.value) })}
+                  >
+                    {frameRates(t).map((r) => (
+                      <option key={r.label} value={r.value === null ? "" : String(r.value)}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="ed-help">{w.frameRateHelp}</span>
                 </div>
                 <div className="ed-group">
                   <label className="ed-label" htmlFor="cv-audio">

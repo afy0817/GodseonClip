@@ -171,6 +171,8 @@ fn main() {
             codec: s.codec,
             quality: command::Quality::Balanced,
             effects: s.effects.clone(),
+            frame_rate: None,
+            gif_short: None,
         };
         let prepared = export::prepare(&ff, &info, &keyframes, &req, || report.clone()).unwrap();
         let summary = prepared.summary().clone();
