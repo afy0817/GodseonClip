@@ -1,0 +1,194 @@
+/* The header's notification center: the bell (a cell of the header strip) and the panel over the
+   screen under it. Square, rows split by hairlines, like the rest (src/styles.css tokens). */
+
+.ed-notify {
+  position: relative;
+  display: flex;
+}
+
+.ed-notify-btn {
+  position: relative;
+}
+
+.ed-top .ed-notify-btn[aria-expanded="true"] {
+  background: #23324f;
+  color: #fff;
+}
+
+/* Finished since the panel was last opened: blue, orange when one failed. */
+.ed-notify-dot {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  width: 7px;
+  height: 7px;
+  background: var(--blue);
+}
+
+.ed-notify-dot.bad {
+  background: #ff8a3d;
+}
+
+/* How far the running items are, along the bell's bottom edge. */
+.ed-notify-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: #3d74e8;
+  transition: width 0.3s linear;
+}
+
+.nt-panel {
+  position: absolute;
+  top: calc(100% + 1px);
+  right: 0;
+  z-index: 40;
+  width: 400px;
+  max-width: calc(100vw - 16px);
+  max-height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  white-space: normal;
+}
+
+.nt-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px var(--pad-x);
+  background: var(--title-bg);
+  border-bottom: 1px solid var(--title-line);
+}
+
+.nt-head b {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.nt-group {
+  padding: 5px var(--pad-x);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.nt-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--pad-y) var(--pad-x);
+  border-bottom: 1px solid var(--line);
+}
+
+.nt-item.running {
+  background: var(--panel);
+  box-shadow: inset 2px 0 0 #3d74e8;
+}
+
+.nt-item.failed {
+  background: #1a1412;
+}
+
+.nt-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.nt-names {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.nt-names b {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.nt-names .mono {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.nt-stats {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.nt-stats > span {
+  white-space: nowrap;
+}
+
+.nt-desc {
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.nt-item.failed .nt-desc {
+  color: #d9cfc6;
+}
+
+.nt-state {
+  flex: none;
+  display: flex;
+  color: var(--blue);
+}
+
+.nt-item.failed .nt-state {
+  color: #ff8a3d;
+}
+
+.nt-item.canceled .nt-state {
+  color: #8b93a1;
+}
+
+.nt-item .ed-btn {
+  flex: none;
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.nt-empty,
+.nt-more {
+  margin: 0;
+  padding: var(--pad-y) var(--pad-x);
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.nt-more {
+  border-bottom: 1px solid var(--line);
+}

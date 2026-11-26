@@ -1,0 +1,586 @@
+/* 일괄 변환 screen — layout and colours of the canvas mockup Convert.dc.html. Tokens: src/styles.css.
+   The header, the split layout (only the panel and the list scroll) and the panel's controls are
+   the editor's (editor.css). Class names start with `cv-` (editor.css has many `ed-` ones). */
+
+/* The list column scrolls on its own, beside the settings panel. */
+.cv.ed-split .ed-main {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Both columns are stacks of rows: padding inside, a hairline below, nothing between. */
+.cv-main > *,
+.cv-aside .ed-aside-scroll > * {
+  margin: 0;
+  padding: var(--pad-y) var(--pad-x);
+  border-bottom: 1px solid var(--line);
+}
+
+/* Title bars (the list's, the panel's): their own fill and hairline. */
+.cv-main > .cv-table-wrap {
+  padding: 0;
+}
+
+.cv-main > .cv-head,
+.cv-aside .ed-aside-scroll > .ed-h2 {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  background: var(--title-bg);
+  border-bottom-color: var(--title-line);
+}
+
+/* ---------------------------------------------------------------- drop zone */
+
+.cv-drop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--panel-2);
+}
+
+/* Files over the window: the row lights up, with a dashed edge inside it. */
+.cv-drop.over {
+  background: var(--blue-bg);
+  outline: 1px dashed var(--blue);
+  outline-offset: -4px;
+}
+
+.cv-drop-text {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.cv-drop-text > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cv-drop-text b {
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.cv-drop-text > div > span {
+  color: var(--dim);
+}
+
+.cv-drop.blocked .cv-drop-text > div > span {
+  color: var(--orange);
+}
+
+.cv-drop-icon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius);
+  background: #1a2233;
+  color: var(--blue-link);
+}
+
+.cv-drop-actions {
+  display: flex;
+}
+
+.cv-drop-actions .ed-btn + .ed-btn {
+  border-left: 0;
+}
+
+.cv-notices {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--orange-bg);
+  color: var(--orange);
+  font-size: 13px;
+}
+
+.cv-notices ul {
+  margin: 0;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------- list */
+
+.cv-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cv-head h1 {
+  margin: 0;
+  font-family: "Space Grotesk", var(--font);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.cv-head h1 span {
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--dim);
+}
+
+.cv-head .link:disabled {
+  color: #7c8494;
+  text-decoration: none;
+  cursor: default;
+}
+
+.cv-table-wrap {
+  container-type: inline-size;
+  overflow-x: auto;
+  background: var(--panel-2);
+}
+
+/* Fixed columns (widths on the header cells): the file name takes what is left and gives way
+   (ellipsis, full path on hover). Narrower than 860 px — the window's minimum width leaves about
+   580, the default 1200 about 820 — codec · size · length · bytes fold into a line under the name,
+   so the name keeps room (at 820 with every column it had about 150 px); 예상 크기 and 상태 stay. */
+.cv-table {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.cv-col-check {
+  width: 52px;
+}
+
+.cv-col-codec {
+  width: 104px;
+}
+
+.cv-col-size {
+  width: 144px;
+}
+
+.cv-col-num {
+  width: 68px;
+}
+
+.cv-col-est {
+  width: 92px;
+}
+
+.cv-col-state {
+  width: 140px;
+}
+
+.cv-table th {
+  padding: 6px 8px;
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+}
+
+/* On the row, not the cells: also under the columns folded away below 860 px. */
+.cv-table thead tr {
+  border-bottom: 1px solid var(--line);
+}
+
+.cv-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid #1c1f27;
+  vertical-align: middle;
+}
+
+.cv-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.cv-table th:first-child,
+.cv-table td:first-child {
+  padding: 0 0 0 calc(var(--pad-x) - 8px);
+}
+
+.cv-table .num {
+  text-align: right;
+}
+
+.cv-table td.mono {
+  font-size: 12.5px;
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+.cv-dim {
+  color: var(--text-2);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cv-name {
+  overflow: hidden;
+}
+
+.cv-name b,
+.cv-name span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-name b {
+  font-weight: 600;
+}
+
+.cv-table tr:not(.on) .cv-name b {
+  color: var(--text-2);
+}
+
+.cv-name span {
+  font-size: 11.5px;
+  color: var(--dim);
+}
+
+.cv-name .cv-meta {
+  display: none;
+  color: var(--text-2);
+}
+
+@container (max-width: 860px) {
+  .cv-table {
+    min-width: 0;
+  }
+
+  .cv-table .cv-wide {
+    display: none;
+  }
+
+  .cv-name .cv-meta {
+    display: block;
+  }
+}
+
+.cv-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+}
+
+.cv-check input,
+.cv-checks input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #3d74e8;
+  cursor: inherit;
+}
+
+.cv-check:has(input:disabled) {
+  cursor: default;
+}
+
+.cv-table td.cv-empty {
+  padding: 24px var(--pad-x);
+  color: var(--dim);
+  text-align: center;
+}
+
+.cv-state {
+  display: inline-block;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: #1f2430;
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.cv-state.ready {
+  background: var(--blue-bg);
+  border-color: var(--blue-line);
+  color: var(--blue-link);
+}
+
+.cv-state.busy {
+  background: #23324f;
+  color: #fff;
+}
+
+.cv-state.done {
+  background: #15261d;
+  border-color: #24452f;
+  color: #8fd8a8;
+}
+
+.cv-state.bad {
+  background: transparent;
+  border-color: #5a3a26;
+  color: var(--orange);
+}
+
+.cv-state.muted {
+  background: transparent;
+  border-color: var(--line-2);
+  color: #8b93a1;
+}
+
+.cv-foot {
+  margin: 0;
+  font-size: 12px;
+  color: #8b93a1;
+}
+
+/* 예상 크기: a number in blue (as the mockup), what is still going on in grey. */
+.cv-table td.cv-est {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cv-table td.cv-est.est {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--blue-link);
+}
+
+.cv-table td.cv-est.plain {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.cv-table td.cv-est.busy {
+  color: var(--text-2);
+}
+
+.cv-table td.cv-est.muted {
+  color: #8b93a1;
+}
+
+.cv-table td.cv-est.bad {
+  color: var(--orange);
+  cursor: help;
+}
+
+/* The settings just changed: these are the old ones' estimates until the new ones arrive. */
+.cv-table td.cv-est.stale,
+.cv-est-total.stale {
+  opacity: 0.4;
+}
+
+/* ---------------------------------------------------------------- settings panel */
+
+.cv-ffmpeg {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--blue);
+}
+
+.cv-ffmpeg.bad {
+  background: var(--orange-bg);
+  color: var(--orange);
+}
+
+.cv-ffmpeg > svg {
+  flex: none;
+}
+
+.cv-ffmpeg > div {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+}
+
+.cv-ffmpeg b {
+  font-weight: 600;
+}
+
+.cv-ffmpeg .mono {
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.cv-ffmpeg .link,
+.cv-row .link,
+.cv-save .link {
+  align-self: center;
+  white-space: nowrap;
+}
+
+/* Drawn like the mockup's (44 px, dark, a chevron): WebKit ignores the height of a native pop-up. */
+.cv-select {
+  width: 100%;
+  min-height: var(--control-h);
+  padding: 0 32px 0 12px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--field)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a3aab7' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")
+    no-repeat right 10px center / 14px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.cv-select:disabled {
+  color: #7c8494;
+  cursor: default;
+}
+
+.cv-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.cv-row .link:disabled {
+  color: #7c8494;
+  cursor: default;
+}
+
+/* 고급 설정: its toggle is the group's title bar, the settings under it a padded block. */
+.cv-aside .ed-aside-scroll > .ed-group:has(> .cv-adv-toggle) {
+  padding: 0;
+  gap: 0;
+}
+
+.cv-adv-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--control-h);
+  padding: 0 var(--pad-x);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--title-bg);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cv-adv-toggle span {
+  font-weight: 400;
+  color: var(--dim);
+}
+
+.cv-adv {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: var(--pad-y) var(--pad-x);
+  border-top: 1px solid var(--title-line);
+}
+
+.cv-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.cv-grid > .ed-group + .ed-group .cv-select {
+  border-left: 0;
+}
+
+.cv-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cv-checks label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  cursor: pointer;
+}
+
+.cv-save-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.cv-path {
+  font-size: 12px;
+}
+
+.cv-name-rule {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+
+/* `.mono` breaks anywhere; "{이름}" and ".webm" stay whole beside the field. */
+.cv-name-rule > span {
+  flex: none;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.cv-name-rule .ed-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 8px;
+  font-size: 13px;
+}
+
+/* The panel's fixed foot (editor.css `.ed-aside-foot`): totals and notes as rows, 변환 시작 the full width. */
+
+.cv-totals {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.cv-total {
+  color: var(--dim);
+}
+
+.cv-est-total {
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.cv-est-total.mono {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.cv-saving {
+  color: var(--blue-link);
+}
+
+.cv-refused {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}

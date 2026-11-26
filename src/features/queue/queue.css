@@ -1,0 +1,369 @@
+/* 작업 큐 screen — layout and colours of the canvas mockup Queue.dc.html. Tokens: src/styles.css.
+   The header is the editor's (TopBar, editor.css). */
+
+.q-main {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.q-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 0 16px;
+  min-height: var(--bar-h);
+  padding-left: var(--pad-x);
+  background: var(--title-bg);
+  border-bottom: 1px solid var(--title-line);
+}
+
+.q-title {
+  display: flex;
+  align-self: center;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.q-title h1 {
+  margin: 0;
+  font-family: "Space Grotesk", var(--font);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.q-sub {
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.q-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0;
+  color: var(--dim);
+}
+
+.q-controls label {
+  align-self: center;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.q-controls .q-select,
+.q-controls .ed-btn {
+  min-height: var(--bar-h);
+}
+
+/* 동시 작업 and 대기 작업 모두 취소: joined cells at the bar's right end. */
+.q-controls .q-select,
+.q-controls .ed-btn {
+  border-top: 0;
+  border-bottom: 0;
+  border-right: 0;
+  border-left: 1px solid var(--title-line);
+}
+
+.q-select {
+  min-height: var(--control-h);
+  padding: 0 12px;
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+}
+
+.q-error {
+  margin: 0;
+  padding: var(--pad-y) var(--pad-x);
+  border-bottom: 1px solid var(--line);
+}
+
+.q-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* A section's title bar. */
+.q-section > .q-h2,
+.q-section-head {
+  padding: 6px var(--pad-x);
+  background: var(--title-bg);
+  border-bottom: 1px solid var(--title-line);
+}
+
+.q-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.q-h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+
+.q-empty {
+  margin: 0;
+  padding: var(--pad-y) var(--pad-x);
+  border-bottom: 1px solid var(--line);
+  color: #8b93a1;
+}
+
+/* ---------------------------------------------------------------- running */
+
+.q-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: var(--pad-y) var(--pad-x);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  box-shadow: inset 2px 0 0 #3d74e8;
+}
+
+.q-card-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+
+.q-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.q-names {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.q-card .q-names {
+  font-size: 15px;
+}
+
+.q-names b,
+.q-row-main b {
+  font-weight: 600;
+}
+
+.q-arrow {
+  color: #8b93a1;
+}
+
+.q-out {
+  font-size: 13px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.q-card .q-out {
+  font-size: 14px;
+}
+
+.q-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.q-tag {
+  padding: 2px 8px;
+  border-radius: var(--radius);
+  background: #1f2533;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.q-card-actions {
+  display: flex;
+}
+
+.q-card-actions .ed-btn + .ed-btn,
+.q-row-actions .ed-btn + .ed-btn {
+  border-left: 0;
+}
+
+.q-progress-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.q-bar {
+  height: 8px;
+  background: var(--bg);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.q-bar > div {
+  height: 100%;
+  background: #3d74e8;
+  border-radius: var(--radius);
+  transition: width 0.3s linear;
+}
+
+.q-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.q-stats .q-estimate {
+  color: #8b93a1;
+}
+
+.q-stats b {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.q-log {
+  flex-basis: 100%;
+  margin: 0;
+  padding: var(--pad-y) var(--pad-x);
+  background: #0a0c10;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 320px;
+  overflow: auto;
+}
+
+/* ---------------------------------------------------------------- lists */
+
+.q-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.q-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  padding: 4px 8px 4px var(--pad-x);
+  border-bottom: 1px solid var(--line);
+}
+
+.q-num {
+  font-size: 12px;
+  color: #8b93a1;
+}
+
+.q-row-main {
+  flex: 1 1 320px;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.q-row-main.col {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.q-row-main.col > .mono {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.q-desc {
+  color: var(--dim);
+}
+
+.q-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.q-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.q-icon:hover:not(:disabled) {
+  background: #1f2533;
+  color: var(--text);
+}
+
+.q-icon:disabled {
+  color: #4a5160;
+  cursor: not-allowed;
+}
+
+.q-state {
+  display: flex;
+  color: var(--blue);
+}
+
+.q-row.failed {
+  background: #1a1412;
+}
+
+.q-row.failed .q-state {
+  color: #ff8a3d;
+}
+
+.q-row.failed .q-desc {
+  color: #d9cfc6;
+}
+
+.q-row.canceled .q-state {
+  color: #8b93a1;
+}
+
+.q-note {
+  color: var(--orange);
+}
+
+.ed-btn.bad {
+  border-color: var(--orange-line);
+  color: #ffd2b3;
+}
+
+.q button:focus-visible,
+.q select:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}

@@ -1,0 +1,5 @@
+# Claude Code copies these gitignored files into new worktrees (gitignore syntax).
+# .claude/ is gitignored on purpose; this keeps its rules and skills available in worktree sessions.
+**/.claude/CLAUDE.md
+**/.claude/rules/**
+**/.claude/skills/**

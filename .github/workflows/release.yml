@@ -1,0 +1,276 @@
+name: Release
+
+# v* 태그를 push할 때만 돈다: 검사 → 세 OS 빌드 → Release. 브랜치 push · PR · 수동 실행으로는 돌지 않는다.
+# 세 빌드가 모두 성공해야 릴리즈가 만들어진다 (하나라도 실패하면 릴리즈 없음).
+#
+# 윈도우 코드 서명 (SignPath Foundation, 오픈 소스 무료 — GodseonPDF · GodseonSync와 같은 방식): 저장소 Secrets에
+# SIGNPATH_API_TOKEN, 변수(Variables)에 SIGNPATH_ORGANIZATION_ID가 있을 때만 서명한다 (없으면 서명 없이 빌드).
+# 서명 요청은 릴리즈마다 두 번이고 SignPath에서 승인해야 끝난다: 1) GodseonClip.exe + 제거 프로그램  2) 설치 파일.
+# SignPath에 넣을 아티팩트 설정은 .signpath/artifact-configurations/*.xml, 설치 파일은 packaging/windows/GodseonClip.iss (Inno Setup).
+# macOS는 Developer ID가 없어 ad-hoc 서명(공증 없음). FFmpeg는 동봉하지 않는다 (앱이 사용자 설치본을 찾는다).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 태그와 앱 버전이 같은지 확인
+        if: runner.os == 'Linux'
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          PKG=$(node -p "require('./package.json').version")
+          CONF=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          CARGO=$(sed -n 's/^version = "\(.*\)"$/\1/p' src-tauri/Cargo.toml | head -n 1)
+          echo "tag=$VERSION package.json=$PKG tauri.conf.json=$CONF Cargo.toml=$CARGO"
+          for v in "$PKG" "$CONF" "$CARGO"; do
+            if [ "$v" != "$VERSION" ]; then
+              echo "::error::태그 $TAG 와 앱 버전이 다릅니다 (package.json $PKG · tauri.conf.json $CONF · Cargo.toml $CARGO)"
+              exit 1
+            fi
+          done
+
+      - name: Ubuntu 빌드 의존성
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+      - run: npm ci
+      - run: npm run test:ts
+      - run: npm run build
+      - run: npm run test:rust
+
+  macos:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+      - run: npm ci
+      - name: Build dmg (universal — Apple Silicon · Intel)
+        env:
+          APPLE_SIGNING_IDENTITY: "-" # 개발자 인증서 없이 ad-hoc 서명
+        run: npm run tauri build -- --target universal-apple-darwin --bundles app,dmg
+      - name: 이름 붙이기
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p release
+          cp "src-tauri/target/universal-apple-darwin/release/bundle/dmg/GodseonClip_${VERSION}_universal.dmg" "release/GodseonClip-${VERSION}-macos-universal.dmg"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-macos
+          path: release/*.dmg
+          if-no-files-found: error
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      actions: read # SignPath가 이 작업과 산출물을 읽는다
+    env:
+      SIGN: ${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+      - name: Version · Inno Setup
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          NUMVER="${VERSION%%[!0-9.]*}" # 윈도우 버전 정보는 숫자만 (1.1.0-beta → 1.1.0) — SignPath도 이 값으로 확인한다
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "NUMVER=$NUMVER" >> "$GITHUB_ENV"
+          ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          if [ ! -f "$ISCC" ]; then choco install innosetup -y --no-progress; fi
+          echo "ISCC=$ISCC" >> "$GITHUB_ENV"
+          echo "서명: $SIGN"
+      - run: npm ci
+      - name: Build GodseonClip.exe (build/windows)
+        run: |
+          npm run tauri build -- --no-bundle
+          mkdir -p build/windows release
+          cp src-tauri/target/release/godseon-clip.exe build/windows/GodseonClip.exe
+          cp LICENSE build/windows/LICENSE.txt
+
+      # ---- 서명 1: GodseonClip.exe + 제거 프로그램 (SignPath 설정이 있을 때만)
+      - name: Prepare files for signing (exe, uninstaller)
+        if: env.SIGN == 'true'
+        run: |
+          mkdir -p build/sign1 build/uninst
+          # 서명 도구 없이 SignedUninstaller=yes 로 컴파일하면 build/uninst/uninst-<버전>-<해시>.e32 를 만들고 '서명 필요' 로 멈춘다 (정상)
+          # Git Bash는 / 로 시작하는 인자를 경로로 바꾼다 (/DAppVersion=… → C:/Program Files/Git/DAppVersion=…) → ISCC 명령만 끈다
+          MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' "$ISCC" "/DAppVersion=$VERSION" "/DAppNumVersion=$NUMVER" /DSignUninstaller packaging/windows/GodseonClip.iss > build/iscc-uninst.log 2>&1 || true
+          UNINST="$(ls build/uninst/uninst-*.e32 build/uninst/uninst-*.e64 2>/dev/null | head -1)"
+          if [ -z "$UNINST" ]; then cat build/iscc-uninst.log; echo "제거 프로그램 사본이 생기지 않았습니다" >&2; exit 1; fi
+          echo "UNINST=$UNINST" >> "$GITHUB_ENV"
+          cp build/windows/GodseonClip.exe build/sign1/GodseonClip.exe
+          cp "$UNINST" build/sign1/uninstaller.exe # SignPath의 pe-file은 .exe 이름으로
+      - name: Upload unsigned exe and uninstaller
+        id: unsigned1
+        if: env.SIGN == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: unsigned-binaries
+          path: build/sign1/
+      - name: Sign exe and uninstaller (SignPath — approve the request)
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'GodseonClip' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: binaries
+          github-artifact-id: ${{ steps.unsigned1.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600 # 승인을 기다린다
+          output-artifact-directory: build/signed1
+          parameters: |
+            version: "${{ env.NUMVER }}"
+      - name: Use signed exe and uninstaller
+        if: env.SIGN == 'true'
+        run: |
+          cp build/signed1/GodseonClip.exe build/windows/GodseonClip.exe
+          cp build/signed1/uninstaller.exe "$UNINST"
+
+      - name: Portable zip
+        run: |
+          (cd build/windows && 7z a -tzip -mx=7 "../../release/GodseonClip-$VERSION-windows-portable.zip" . > /dev/null)
+
+      - name: Build installer (Inno Setup)
+        run: |
+          MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' "$ISCC" "/DAppVersion=$VERSION" "/DAppNumVersion=$NUMVER" ${{ env.SIGN == 'true' && '/DSignUninstaller' || '' }} packaging/windows/GodseonClip.iss
+
+      # ---- 서명 2: 설치 파일
+      - name: Prepare installer for signing
+        if: env.SIGN == 'true'
+        run: mkdir -p build/sign2 && cp "release/GodseonClip-$VERSION-windows-setup.exe" build/sign2/setup.exe
+      - name: Upload unsigned installer
+        id: unsigned2
+        if: env.SIGN == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: unsigned-installer
+          path: build/sign2/
+      - name: Sign installer (SignPath — approve the request)
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'GodseonClip' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.unsigned2.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: build/signed2
+          parameters: |
+            version: "${{ env.NUMVER }}"
+      - name: Use signed installer
+        if: env.SIGN == 'true'
+        run: cp build/signed2/setup.exe "release/GodseonClip-$VERSION-windows-setup.exe"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-windows
+          path: |
+            release/*.exe
+            release/*.zip
+          if-no-files-found: error
+
+  linux:
+    needs: test
+    runs-on: ubuntu-22.04 # 22.04에서 빌드해야 22.04 · 24.04 둘 다에서 돈다 (glibc)
+    steps:
+      - uses: actions/checkout@v7
+      - name: Ubuntu 빌드 의존성
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+      - run: npm ci
+      - name: Build deb and AppImage (x64)
+        run: npm run tauri build -- --bundles deb,appimage
+      - name: 이름 붙이기
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p release
+          cp src-tauri/target/release/bundle/deb/*.deb "release/GodseonClip-${VERSION}-linux-amd64.deb"
+          cp src-tauri/target/release/bundle/appimage/*.AppImage "release/GodseonClip-${VERSION}-linux-amd64.AppImage"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-linux
+          path: |
+            release/*.deb
+            release/*.AppImage
+          if-no-files-found: error
+
+  release:
+    needs: [macos, windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: release
+          pattern: release-* # 서명 전 파일(unsigned-*)은 올리지 않는다
+          merge-multiple: true
+      - name: 릴리즈 본문
+        run: sed -e "s|__VERSION__|${GITHUB_REF_NAME#v}|g" -e "s|__REPO__|${GITHUB_REPOSITORY}|g" .github/release-notes.md > "$RUNNER_TEMP/notes.md"
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: GodseonClip ${{ github.ref_name }}
+          body_path: ${{ runner.temp }}/notes.md
+          files: release/*
+          fail_on_unmatched_files: true
+          make_latest: true

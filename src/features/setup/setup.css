@@ -1,0 +1,498 @@
+/* FFmpeg 설정 · 첫 실행 — layout and colours of the canvas mockup Setup.dc.html. Tokens: src/styles.css.
+   The header is the editor's (TopBar, editor.css). */
+
+.st-main {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  min-height: calc(100vh - var(--bar-h) - 1px);
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+}
+
+/* The page is a column of blocks, flush, a hairline below each. */
+.st-main > * {
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.st-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px var(--pad-x);
+}
+
+.st-eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--blue-link);
+}
+
+.st-intro h1 {
+  margin: 0;
+  font-family: "Space Grotesk", var(--font);
+  font-size: 20px;
+  line-height: 1.25;
+  font-weight: 600;
+}
+
+.st-intro p {
+  margin: 0;
+  max-width: 680px;
+  font-size: 14px;
+  color: var(--text-2);
+}
+
+.st-dim {
+  color: var(--dim);
+}
+
+/* ---------------------------------------------------------------- cards */
+
+.st-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-2);
+}
+
+.st-card h2,
+.st-section h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.st-card > *,
+.st-section > * {
+  margin: 0;
+  padding: 12px var(--pad-x);
+}
+
+/* A block's title: a bar of its own. */
+.st-card > h2,
+.st-section > h2,
+.st-section > .st-section-head {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  background: var(--title-bg);
+  border-bottom: 1px solid var(--title-line);
+}
+
+.st-card p {
+  margin: 0;
+}
+
+.st-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 20px;
+}
+
+.st-card-text {
+  flex: 1 1 360px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.st-card-text .mono {
+  font-size: 12px;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+
+.st-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+}
+
+.st-card-actions .ed-btn + .ed-btn {
+  border-left: 0;
+}
+
+.st-mark {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+}
+
+.st-mark svg {
+  width: 18px;
+  height: 18px;
+}
+
+.st-mark.ok {
+  background: var(--blue-bg);
+  color: var(--blue);
+}
+
+.st-mark.warn {
+  background: #2a1c14;
+  color: #ff8a3d;
+}
+
+.st-found {
+  box-shadow: inset 2px 0 0 #3d74e8;
+}
+
+.st-missing {
+  background: var(--orange-bg);
+  box-shadow: inset 2px 0 0 #ff8a3d;
+}
+
+.st-missing h2 {
+  color: #f1e4d8;
+}
+
+.st-missing p {
+  color: #d9cfc6;
+}
+
+.st-missing .st-problem {
+  color: var(--orange);
+}
+
+.st-warn-btn {
+  border-color: var(--orange-line);
+  background: transparent;
+  color: #ffd2b3;
+}
+
+.st-searched summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #bfb3a8;
+}
+
+.st-searched ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #bfb3a8;
+  overflow-wrap: anywhere;
+}
+
+/* What this FFmpeg can do: ✓ works, ! missing or failed, – not on this machine (fine). */
+.st-features {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  /* Two columns in the 960 px column: three (the mockup's 260 px) broke "최소 6.0" inside the number. */
+  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+  gap: 1px;
+  background: var(--line);
+  border-top: 1px solid var(--line);
+}
+
+/* The list's cells: flush, the grid's 1 px gap is their hairline. */
+.st-card > .st-features {
+  padding: 0;
+}
+
+.st-features li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px var(--pad-x);
+  background: var(--panel-2);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+
+.st-features li > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.st-features li.ok > svg {
+  color: var(--blue);
+}
+
+.st-features li.warn > svg {
+  color: #ff8a3d;
+}
+
+.st-features li.off > svg,
+.st-features li.pending > svg {
+  color: #6b7385;
+}
+
+.st-features li.warn {
+  cursor: help;
+}
+
+.st-features code {
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.st-plain {
+  color: var(--text-2);
+}
+
+.st-what {
+  color: var(--dim);
+}
+
+.st-notice {
+  padding: var(--pad-y) var(--pad-x);
+  background: var(--orange-bg);
+  color: #f1e4d8;
+  font-size: 13px;
+}
+
+/* ---------------------------------------------------------------- install guide */
+
+.st-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.st-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.st-section-head h2 {
+  font-family: "Space Grotesk", var(--font);
+  font-size: 15px;
+}
+
+.st-tabs button {
+  min-height: 32px;
+  padding: 0 16px;
+}
+
+.st-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.st-guide h3,
+.st-caution h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.st-guide ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.st-guide li {
+  display: flex;
+  gap: 14px;
+}
+
+.st-step {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius);
+  background: #1a2233;
+  color: var(--blue-link);
+  font-weight: 600;
+}
+
+.st-step-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 3px;
+}
+
+.st-command {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 14px;
+  background: #0a0c10;
+  border: 1px solid #22262f;
+  border-radius: var(--radius);
+}
+
+.st-command code {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 14px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.st-command .ed-btn {
+  flex: none;
+  min-height: var(--control-h);
+}
+
+.st-caution {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--pad-y) var(--pad-x);
+  background: var(--orange-bg);
+  box-shadow: inset 2px 0 0 #ff8a3d;
+}
+
+.st-caution h3 {
+  color: #f1e4d8;
+}
+
+.st-caution p {
+  margin: 0;
+  color: #d9cfc6;
+}
+
+.st-guide-note {
+  margin: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--dim);
+}
+
+/* ---------------------------------------------------------------- own path · why · diagnostics */
+
+.st-manual {
+  background: var(--panel-2);
+}
+
+.st-manual h2 {
+  font-size: 15px;
+}
+
+.st-manual-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0;
+}
+
+.st-manual-row .ed-btn {
+  border-left: 0;
+}
+
+.st-field {
+  flex: 1 1 360px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.st-saved {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.st-saved p {
+  flex: 1 1 360px;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.st-saved code {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.st-why p {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.st-why h2 {
+  font-size: 15px;
+}
+
+.st-diag {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  padding: 12px var(--pad-x);
+  background: var(--panel-2);
+}
+
+.st-diag > * {
+  padding: 0;
+}
+
+.st-diag > div {
+  flex: 1 1 420px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.st-diag h2 {
+  font-size: 15px;
+}
+
+/* ---------------------------------------------------------------- language (Phase 3 step 5) */
+
+.st-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: space-between;
+}
+
+.st-top .st-intro {
+  flex: 1 1 420px;
+}
+
+.st-lang {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 0 1 340px;
+  padding: 14px var(--pad-x);
+  border-left: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.st-lang .ed-seg button {
+  min-width: 0;
+}
+
+.st-lang .st-dim {
+  line-height: 1.45;
+}

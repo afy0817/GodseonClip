@@ -1,0 +1,1987 @@
+/* Editor screen — layout and colours of the canvas mockup Editor.dc.html. Tokens: src/styles.css. */
+
+.ed {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  --wave-color: #5c6475;
+}
+
+/* ---------------------------------------------------------------- header */
+
+.ed-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: space-between;
+  min-height: var(--bar-h);
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.ed-top-left {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  flex: 1 1 260px;
+}
+
+.ed-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 var(--pad-x);
+  color: var(--blue);
+}
+
+.ed-brand span {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.ed-file {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 var(--pad-x);
+  border-left: 1px solid var(--line);
+}
+
+.ed-file b {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ed-file span {
+  font-size: 12px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ed-modes {
+  display: flex;
+  align-items: stretch;
+}
+
+.ed-mode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--bar-h);
+  padding: 0 var(--pad-x);
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--dim);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ed-mode:hover:not(:disabled):not([aria-pressed="true"]) {
+  background: var(--panel);
+  color: var(--text);
+}
+
+/* The kind shown: filled, with a bar along the bottom edge (no outline inside the strip). */
+.ed-mode[aria-pressed="true"] {
+  background: #23324f;
+  color: #fff;
+  box-shadow: inset 0 -2px 0 #3d74e8;
+}
+
+.ed-mode:disabled {
+  cursor: not-allowed;
+  color: #7c8494;
+}
+
+.ed-soon {
+  padding: 0 6px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  color: #8b93a1;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.ed-actions {
+  display: flex;
+  align-items: stretch;
+}
+
+/* Header buttons are cells of the strip: full height, a hairline between, no outline. */
+.ed-top .ed-btn {
+  min-height: var(--bar-h);
+  padding: 0 14px;
+  border: 0;
+  border-left: 1px solid var(--line);
+}
+
+.ed-top .ed-btn.icon {
+  width: var(--bar-h);
+}
+
+.ed-top .ed-btn:hover:not(:disabled) {
+  background: var(--panel);
+}
+
+.ed-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--control-h);
+  padding: 0 14px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ed-btn:hover:not(:disabled) {
+  border-color: #3a4050;
+}
+
+.ed-btn:disabled {
+  cursor: not-allowed;
+  color: #7c8494;
+}
+
+.ed-btn.icon {
+  width: var(--control-h);
+  padding: 0;
+}
+
+/* 작업 큐 · 설정: the current screen; the queue's count of items that run or wait. */
+.ed-queue-btn[aria-current="page"],
+.ed-settings-btn[aria-current="page"],
+.ed-top .ed-queue-btn[aria-current="page"]:hover,
+.ed-top .ed-settings-btn[aria-current="page"]:hover {
+  background: #23324f;
+  color: #fff;
+  box-shadow: inset 0 -2px 0 #3d74e8;
+}
+
+.ed-queue-count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius);
+  background: var(--blue-strong);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}
+
+.ed-btn.primary {
+  border-color: var(--blue-strong);
+  background: var(--blue-strong);
+  color: #fff;
+  font-weight: 600;
+}
+
+.ed-btn.primary:disabled {
+  opacity: 0.5;
+}
+
+.ed-btn.danger {
+  border-color: #c2622a;
+  background: #2a1c14;
+  color: #ffd2b3;
+}
+
+.ed-btn.mark {
+  border-color: #3d74e8;
+  background: var(--blue-bg);
+}
+
+.ed-btn.mark:disabled {
+  border-color: var(--line-2);
+  background: transparent;
+}
+
+/* 구간 제거: 제거 구간 추가 (A). */
+.ed-btn.cut {
+  border-color: #c2622a;
+  background: #2a1c14;
+  color: #ffd2b3;
+}
+
+.ed-btn.cut .ed-kbd {
+  border-color: #5a3a26;
+  color: #ffd2b3;
+}
+
+.ed-btn.cut:disabled {
+  border-color: var(--line-2);
+  background: transparent;
+  color: #7c8494;
+}
+
+.ed-kbd {
+  padding: 0 6px;
+  border: 1px solid #3d4a66;
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dim);
+}
+
+.ed-btn:disabled .ed-kbd {
+  border-color: var(--line-2);
+  color: #7c8494;
+}
+
+.ed button:focus-visible,
+.ed input:focus-visible,
+.ed-track:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------- body */
+
+.ed-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+}
+
+.ed-main {
+  flex: 999 1 640px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ed-aside {
+  flex: 1 1 340px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-2);
+  border-left: 1px solid var(--line);
+}
+
+/* The editor fills the window at every size: the 편집 · 내보내기 panel keeps its width beside the
+   player and is the only part that scrolls — above its fixed foot (the final action: 내보내기 · 변환
+   시작, with what it will make). The main column never scrolls — the player takes the
+   height the transport and timeline leave (the window minimum, 960 × 700 in tauri.conf.json — measured in 구간 제거, the taller mode, keeps them whole). */
+.ed.ed-split {
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ed-split .ed-body {
+  flex-wrap: nowrap;
+  min-height: 0;
+}
+
+/* One header row down to the window's minimum width: the file name gives way (ellipsis). */
+.ed-split .ed-top-left {
+  flex-basis: 140px;
+}
+
+.ed-split .ed-main {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.ed-split .ed-main > * {
+  flex-shrink: 0;
+}
+
+.ed-split .ed-main > .ed-stage {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 120px;
+}
+
+.ed-split .ed-aside {
+  flex: 0 0 340px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The panel: its settings scroll; the foot stays at the bottom. */
+.ed-aside-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The final action and what goes with it, always in view. A long one (the queued item's log)
+   scrolls inside, so the settings above keep at least half the panel. */
+.ed-aside-foot {
+  flex: none;
+  max-height: 50%;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.ed-aside-foot > * {
+  margin: 0;
+  padding: var(--pad-y) var(--pad-x);
+  border-bottom: 1px solid var(--line);
+}
+
+.ed-aside-foot > :last-child {
+  border-bottom: 0;
+}
+
+.ed-aside-foot > span {
+  display: block;
+}
+
+.ed-aside-foot > .ed-export {
+  flex: none;
+  padding: 0;
+}
+
+/* A short player: the message over it (open a file, proxy, drop) needs less room. */
+@media (max-height: 720px) {
+  .ed-split .ed-stage-msg {
+    padding: 16px 24px;
+    gap: 6px;
+  }
+}
+
+/* ---------------------------------------------------------------- stage */
+
+.ed-stage {
+  position: relative;
+  height: clamp(200px, 34vw, 440px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #08090c;
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.ed-stage video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  cursor: pointer;
+}
+
+.ed-stage video.ed-video-hidden {
+  visibility: hidden;
+}
+
+/* The video's wrapper: the whole stage, or with 화면 효과 the box the picture is drawn in. */
+.ed-picture {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ed-picture.fx {
+  inset: auto;
+  display: block;
+  overflow: hidden;
+}
+
+/* 결과: the export's frame — black where 맞춤 puts bars; the picture is clipped inside it. */
+.ed-result-frame {
+  position: absolute;
+  background: #000;
+  outline: 1px solid var(--line-2);
+}
+
+.ed-picture.fx video {
+  position: absolute;
+  max-width: none;
+  object-fit: fill;
+  transform-origin: center;
+}
+
+/* The crop box: the picture outside it dimmed, thirds inside, eight handles. */
+.ed-crop {
+  position: absolute;
+  z-index: 2;
+  border: 1px solid #6ea0ff;
+  box-shadow: 0 0 0 9999px rgba(8, 9, 12, 0.62);
+  cursor: move;
+  touch-action: none;
+}
+
+.ed-crop-thirds,
+.ed-crop-thirds::before,
+.ed-crop-thirds::after {
+  position: absolute;
+  pointer-events: none;
+}
+
+.ed-crop-thirds {
+  inset: 0;
+}
+
+.ed-crop-thirds::before {
+  content: "";
+  top: 0;
+  bottom: 0;
+  left: 33.333%;
+  right: 33.333%;
+  border-left: 1px solid rgba(255, 255, 255, 0.22);
+  border-right: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.ed-crop-thirds::after {
+  content: "";
+  left: 0;
+  right: 0;
+  top: 33.333%;
+  bottom: 33.333%;
+  border-top: 1px solid rgba(255, 255, 255, 0.22);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+/* Inside the box, clear of the corner and edge handles. */
+.ed-crop-label {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  padding: 0 6px;
+  background: #6ea0ff;
+  color: #0e1014;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.ed-crop-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  background: #6ea0ff;
+  outline: 1px solid #0e1014;
+}
+
+/* A larger target than the square drawn. */
+.ed-crop-handle::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+}
+
+.ed-crop-handle.nw { left: 0; top: 0; cursor: nwse-resize; }
+.ed-crop-handle.n { left: 50%; top: 0; cursor: ns-resize; }
+.ed-crop-handle.ne { left: 100%; top: 0; cursor: nesw-resize; }
+.ed-crop-handle.e { left: 100%; top: 50%; cursor: ew-resize; }
+.ed-crop-handle.se { left: 100%; top: 100%; cursor: nwse-resize; }
+.ed-crop-handle.s { left: 50%; top: 100%; cursor: ns-resize; }
+.ed-crop-handle.sw { left: 0; top: 100%; cursor: nesw-resize; }
+.ed-crop-handle.w { left: 0; top: 50%; cursor: ew-resize; }
+
+/* 모자이크 · 블러 boxes: orange, above the crop box (nothing dimmed); dashed outside their times. */
+.ed-crop.mask {
+  z-index: 3;
+  border-color: #ffb27f;
+  box-shadow: none;
+}
+
+.ed-crop.mask.off,
+.ed-mask-box.off {
+  border-style: dashed;
+}
+
+.ed-crop.mask .ed-crop-handle {
+  background: #ffb27f;
+}
+
+.ed-crop.mask .ed-crop-thirds {
+  display: none;
+}
+
+.ed-crop.mask .ed-crop-label,
+.ed-mask-box .ed-crop-label {
+  left: 4px;
+  top: 4px;
+  background: #ffb27f;
+}
+
+.ed-mask-box {
+  position: absolute;
+  z-index: 3;
+  padding: 0;
+  border: 1px solid rgba(255, 178, 127, 0.8);
+  border-radius: var(--radius);
+  background: transparent;
+  cursor: pointer;
+}
+
+/* PiP boxes: teal, ratio kept. */
+.ed-crop.overlay {
+  z-index: 3;
+  border-color: #5cc8b5;
+  box-shadow: none;
+}
+
+.ed-crop.overlay.off,
+.ed-overlay-box.off {
+  border-style: dashed;
+}
+
+.ed-crop.overlay .ed-crop-handle {
+  background: #5cc8b5;
+}
+
+.ed-crop.overlay .ed-crop-handle.n,
+.ed-crop.overlay .ed-crop-handle.s,
+.ed-crop.overlay .ed-crop-handle.e,
+.ed-crop.overlay .ed-crop-handle.w,
+.ed-crop.overlay .ed-crop-thirds {
+  display: none;
+}
+
+.ed-crop.overlay .ed-crop-label,
+.ed-overlay-box .ed-crop-label {
+  left: 4px;
+  top: 4px;
+  max-width: calc(100% - 8px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: #5cc8b5;
+}
+
+.ed-overlay-box {
+  position: absolute;
+  z-index: 3;
+  padding: 0;
+  border: 1px solid rgba(92, 200, 181, 0.85);
+  border-radius: var(--radius);
+  background: transparent;
+  cursor: pointer;
+}
+
+.ed-overlay-media {
+  position: absolute;
+  max-width: none;
+  object-fit: fill;
+  transform-origin: center;
+  pointer-events: none;
+}
+
+/* The previews (inside the picture's wrapper, under the boxes). */
+.ed-mask-blur,
+.ed-mask-mosaic {
+  position: absolute;
+  pointer-events: none;
+}
+
+.ed-mask-blur {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.ed-mask-mosaic {
+  image-rendering: pixelated;
+  transform-origin: center;
+}
+
+/* 편집 화면 | 결과 (top right while 화면 효과 are on). */
+.ed-stage-view {
+  position: absolute;
+  right: 14px;
+  top: 8px;
+  z-index: 4;
+  display: flex;
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  font-size: 12px;
+}
+
+.ed-stage-view button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.ed-stage-view button + button {
+  border-left: 1px solid var(--line-2);
+}
+
+.ed-stage-view button[aria-pressed="true"] {
+  background: #23324f;
+  color: #fff;
+  box-shadow: inset 0 0 0 1px #3d74e8;
+}
+
+.ed-stage-msg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 48px 56px;
+  background: #161a22;
+  text-align: center;
+}
+
+.ed-stage-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #c3c8d2;
+}
+
+.ed-stage-sub {
+  max-width: 560px;
+  font-size: 13px;
+  color: #8b93a1;
+}
+
+.ed-stage-error {
+  max-width: 560px;
+  margin: 0;
+  color: var(--orange);
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+/* A saved FFmpeg path that was skipped at start (the stage's warning color, boxed like the aside notes). */
+.ed-stage-notice {
+  max-width: 560px;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--orange-line);
+  border-radius: var(--radius);
+  background: var(--orange-bg);
+  color: #f1e4d8;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.ed-stage-msg .ed-link {
+  align-self: center;
+}
+
+/* Files dragged over the window (no drop state in the mockup: the stage's own message style, in blue). */
+.ed-stage-drop {
+  position: absolute;
+  inset: 10px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px 40px;
+  border: 2px dashed var(--blue);
+  border-radius: var(--radius);
+  background: rgba(23, 32, 54, 0.94);
+  color: var(--blue);
+  text-align: center;
+  pointer-events: none;
+}
+
+.ed-stage-drop .ed-stage-title {
+  color: var(--text);
+}
+
+.ed-stage-drop.blocked {
+  border-color: var(--orange-line);
+  background: rgba(30, 24, 19, 0.94);
+}
+
+.ed-stage-drop.blocked .ed-stage-sub {
+  color: var(--orange);
+}
+
+.ed-stage-drop-name {
+  max-width: min(560px, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.ed-stage-progress {
+  width: min(360px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ed-corner {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border: 0 solid #3a4050;
+}
+
+.ed-corner.tl {
+  left: 16px;
+  top: 16px;
+  border-left-width: 2px;
+  border-top-width: 2px;
+}
+
+.ed-corner.tr {
+  right: 16px;
+  top: 16px;
+  border-right-width: 2px;
+  border-top-width: 2px;
+}
+
+.ed-corner.bl {
+  left: 16px;
+  bottom: 16px;
+  border-left-width: 2px;
+  border-bottom-width: 2px;
+}
+
+.ed-corner.br {
+  right: 16px;
+  bottom: 16px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+}
+
+.ed-badge {
+  position: absolute;
+  z-index: 4;
+  left: 16px;
+  top: 16px;
+  padding: 2px 8px;
+  border-radius: var(--radius);
+  background: #1f2533;
+  color: var(--dim);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+/* With 화면 효과 the picture sits below a strip: the badge lines up with 편집 화면 | 결과 there. */
+.ed-stage.fx .ed-badge {
+  top: 11px;
+}
+
+.ed-stage-tc {
+  position: absolute;
+  z-index: 4;
+  left: 16px;
+  bottom: 16px;
+  padding: 2px 8px;
+  border-radius: var(--radius);
+  background: rgba(8, 9, 12, 0.8);
+  color: var(--text);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- transport */
+
+.ed-transport {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+/* Play / step buttons and the marks: joined cells, the hairline shared. */
+.ed-tbtns,
+.ed-marks {
+  display: flex;
+  align-items: stretch;
+}
+
+.ed-tbtns > *,
+.ed-marks > * {
+  border-top: 0;
+  border-bottom: 0;
+  border-right: 0;
+}
+
+.ed-marks > :last-child {
+  border-right: 0;
+}
+
+.ed-tbtns > :first-child {
+  border-left: 0;
+}
+
+.ed-tbtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.ed-tbtn:hover:not(:disabled) {
+  background: var(--panel);
+}
+
+.ed-play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 40px;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--blue-strong);
+  color: #fff;
+  cursor: pointer;
+}
+
+.ed-marks .ed-btn {
+  min-height: 40px;
+  border-color: var(--line);
+}
+
+.ed-tbtn:disabled,
+.ed-play:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ed-clock {
+  align-self: center;
+  padding: 0 var(--pad-x);
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.ed-clock-total {
+  color: #8b93a1;
+}
+
+/* ---------------------------------------------------------------- timeline */
+
+.ed-timeline {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-2);
+}
+
+.ed-timeline.empty {
+  min-height: 120px;
+}
+
+/* No file yet: the title as the bar, the hint under it. */
+.ed-timeline > .ed-tl-title {
+  padding: 8px var(--pad-x);
+  background: var(--title-bg);
+  border-bottom: 1px solid var(--title-line);
+}
+
+.ed-timeline > p {
+  margin: 0;
+  padding: var(--pad-y) var(--pad-x);
+}
+
+.ed-tl-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 16px;
+  padding: 6px var(--pad-x);
+  background: var(--title-bg);
+  border-bottom: 1px solid var(--title-line);
+}
+
+.ed-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.ed-tl-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ed-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ed-swatch.keep {
+  width: 14px;
+  height: 10px;
+  border-top: 2px solid var(--blue);
+  border-bottom: 2px solid var(--blue);
+}
+
+.ed-swatch.cut {
+  width: 14px;
+  height: 10px;
+  background: repeating-linear-gradient(135deg, rgba(255, 138, 61, 0.85) 0 3px, rgba(255, 138, 61, 0.25) 3px 6px);
+}
+
+.ed-swatch.keyframe {
+  width: 1px;
+  height: 10px;
+  background: #6b7385;
+}
+
+.ed-swatch.playhead {
+  width: 2px;
+  height: 12px;
+  background: #fff;
+}
+
+.ed-zoom {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.ed-zoom input {
+  width: 140px;
+  accent-color: var(--blue);
+}
+
+/* Zoom: the content is `zoom` times the viewport and scrolls sideways. --tl-pad keeps the handles
+   and the playhead at the very ends from being clipped by the scroll box. */
+.ed-tl-scroll {
+  --tl-pad: 8px;
+  margin: 8px calc(var(--pad-x) - var(--tl-pad)) 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.ed-tl-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+  min-width: 100%;
+  padding: 0 var(--tl-pad);
+}
+
+.ed-ruler {
+  position: relative;
+  height: 16px;
+  font-size: 11px;
+  line-height: 16px;
+  color: #8b93a1;
+}
+
+.ed-ruler span {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+/* Keyframe ticks (8px), thumbnails, waveform; the range overlays span thumbnails and waveform,
+   the playhead everything. Positions are fractions of the duration. */
+.ed-track {
+  position: relative;
+  height: 120px;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  border-radius: var(--radius);
+}
+
+.ed-track.handle-drag {
+  cursor: ew-resize;
+}
+
+.ed-keyframes {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  width: 100%;
+  height: 8px;
+  overflow: visible;
+}
+
+.ed-keyframes path {
+  fill: none;
+  stroke: #6b7385;
+  stroke-width: 1px;
+}
+
+.ed-thumbs {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 12px;
+  height: 60px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #0a0c10;
+}
+
+.ed-thumbs img {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  object-fit: cover;
+  border-right: 2px solid var(--panel-2);
+}
+
+.ed-wave {
+  position: absolute;
+  left: 0;
+  top: 78px;
+  display: block;
+  width: 100%;
+  height: 40px;
+}
+
+.ed-dim {
+  position: absolute;
+  top: 12px;
+  bottom: 0;
+  background: rgba(8, 9, 12, 0.74);
+  pointer-events: none;
+}
+
+.ed-keep {
+  position: absolute;
+  top: 12px;
+  bottom: 0;
+  border-top: 2px solid var(--blue);
+  border-bottom: 2px solid var(--blue);
+  pointer-events: none;
+}
+
+.ed-handle {
+  position: absolute;
+  top: 12px;
+  bottom: 0;
+  width: 6px;
+  margin-left: -3px;
+  border-radius: var(--radius);
+  background: var(--blue);
+  cursor: ew-resize;
+}
+
+/* Grab area (Timeline HANDLE_HIT_PX each side); the press itself is handled by the track. */
+.ed-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  right: -5px;
+}
+
+.ed-tag {
+  position: absolute;
+  top: 16px;
+  padding: 0 6px;
+  border-radius: var(--radius);
+  background: var(--blue);
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Timeline TAG_GAP from the handle; .low is the second row when IN and OUT would overlap. */
+.ed-tag.after {
+  margin-left: 6px;
+}
+
+.ed-tag.before {
+  margin-right: 6px;
+}
+
+.ed-tag.low {
+  top: 40px;
+}
+
+/* 구간 제거 (canvas mockup): hatched ranges with orange edges and a #n tag; the selected one is
+   brighter. The press itself is handled by the track (cutList.grabEdge). */
+.ed-cut {
+  position: absolute;
+  top: 12px;
+  bottom: 0;
+  box-sizing: border-box;
+  border-left: 2px solid #ff8a3d;
+  border-right: 2px solid #ff8a3d;
+  background: repeating-linear-gradient(135deg, rgba(255, 138, 61, 0.62) 0 5px, rgba(14, 16, 20, 0.55) 5px 10px);
+  pointer-events: none;
+}
+
+.ed-cut.selected {
+  border-width: 0 3px;
+  border-color: #ffd2b3;
+  background: repeating-linear-gradient(135deg, rgba(255, 160, 100, 0.8) 0 5px, rgba(14, 16, 20, 0.45) 5px 10px);
+  box-shadow: 0 0 0 1px #ff8a3d;
+}
+
+.ed-cut-tag {
+  position: absolute;
+  left: 0;
+  top: 4px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: var(--radius);
+  background: #ff8a3d;
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.ed-cut.selected .ed-cut-tag {
+  background: #ffd2b3;
+}
+
+/* I · O marks of the next range to remove, not yet added. */
+.ed-mark-range,
+.ed-mark-line {
+  position: absolute;
+  top: 12px;
+  bottom: 0;
+  box-sizing: border-box;
+  border: 2px dashed #ff8a3d;
+  pointer-events: none;
+}
+
+.ed-mark-range {
+  background: rgba(255, 138, 61, 0.12);
+}
+
+.ed-mark-line {
+  width: 0;
+  margin-left: -1px;
+  border-width: 0 0 0 2px;
+}
+
+.ed-tag.mark {
+  top: 52px;
+  background: #2a1c14;
+  color: #ffd2b3;
+  border: 1px solid #c2622a;
+}
+
+.ed-tag.mark.low {
+  top: 76px;
+}
+
+.ed-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #fff;
+  pointer-events: none;
+}
+
+.ed-playhead::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: -4px;
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+.ed-hint {
+  margin: 0;
+  padding: 6px var(--pad-x) 8px;
+  font-size: 12px;
+  color: #8b93a1;
+}
+
+/* ---------------------------------------------------------------- side panel */
+
+.ed-section {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--line);
+}
+
+/* Every block of a panel section is a row: padding inside, a hairline below, nothing between. */
+.ed-section > * {
+  margin: 0;
+  padding: var(--pad-y) var(--pad-x);
+  border-bottom: 1px solid var(--line);
+}
+
+.ed-section > :last-child {
+  border-bottom: 0;
+}
+
+.ed-section > span {
+  display: block;
+}
+
+/* The section's title: a bar of its own, set apart by its fill and hairline. */
+.ed-section > .ed-section-head,
+.ed-section > .ed-h3 {
+  padding-top: 9px;
+  padding-bottom: 9px;
+  background: var(--title-bg);
+  border-bottom-color: var(--title-line);
+}
+
+.ed-section-head p {
+  font-size: 12px;
+}
+
+.ed-section-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ed-section-head p {
+  margin: 0;
+}
+
+.ed-h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.ed-h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.ed-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ed-fields > .ed-field + .ed-field .ed-input {
+  border-left: 0;
+}
+
+.ed-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.ed-input {
+  min-height: var(--control-h);
+  width: 100%;
+  padding: 0 12px;
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 14px;
+}
+
+.ed-input:disabled {
+  color: #7c8494;
+}
+
+.ed-input[aria-invalid="true"] {
+  border-color: #c2622a;
+}
+
+.ed-result {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: var(--pad-y) var(--pad-x);
+}
+
+.ed-result-value {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.ed-note {
+  display: flex;
+  gap: 10px;
+  padding: var(--pad-y) var(--pad-x);
+  background: var(--orange-bg);
+  color: #f1e4d8;
+}
+
+.ed-note > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--orange);
+}
+
+/* Information, not a caveat (정밀 mode). */
+.ed-note.info {
+  background: #172036;
+  border-color: #2d4373;
+  color: #e8eaee;
+}
+
+.ed-note.info > svg {
+  color: #6ea0ff;
+}
+
+.ed-note-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ed-note-body b {
+  font-weight: 500;
+}
+
+.ed-link {
+  align-self: flex-start;
+  min-height: 32px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--orange);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.ed-link:disabled {
+  color: #a08672;
+  cursor: not-allowed;
+}
+
+/* 구간 제거 list (canvas mockup). */
+.ed-cuts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.ed-cut-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 2px 2px 4px;
+  margin-top: -1px;
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+}
+
+.ed-cut-row.selected {
+  border-color: #c2622a;
+  background: #2a1c14;
+}
+
+.ed-cut-pick {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ed-cut-no {
+  padding: 0 6px;
+  border-radius: var(--radius);
+  background: #ff8a3d;
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+}
+
+.ed-cut-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ed-cut-span {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ed-cut-len {
+  font-size: 11.5px;
+  color: var(--dim);
+}
+
+/* 무손실: what happens to the removed range (part of it comes back, or all of it stays). */
+.ed-cut-note {
+  font-size: 11.5px;
+  color: var(--dim);
+  white-space: normal;
+}
+
+.ed-cut-note.warn {
+  color: var(--orange);
+}
+
+.ed-cut-del {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.ed-cut-del:hover {
+  color: #ffd2b3;
+}
+
+.ed-cut-del.small {
+  width: 32px;
+  height: 32px;
+}
+
+.ed-mark-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px 6px var(--pad-x);
+  background: #2a1c14;
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+
+.ed-mark-row .mono {
+  flex: 1 1 auto;
+}
+
+.ed-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--control-h);
+  padding: 0 var(--pad-x);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.ed-add:hover:not(:disabled) {
+  background: var(--panel);
+}
+
+.ed-add:disabled {
+  color: #7c8494;
+  cursor: not-allowed;
+}
+
+.ed-sum {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 12px;
+  padding: var(--pad-y) var(--pad-x);
+  background: var(--panel);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+
+.ed-sum dt {
+  font-family: var(--font);
+  color: var(--dim);
+}
+
+.ed-sum dd {
+  margin: 0;
+  text-align: right;
+}
+
+.ed-sum .ed-sum-cut {
+  color: var(--orange);
+}
+
+.ed-sum .ed-sum-total {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.ed-sum dd.ed-sum-total {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+/* Sections have their own hairline. */
+.ed-divider {
+  display: none;
+}
+
+.ed-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ed-label,
+.ed-help {
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.ed-help {
+  color: #8b93a1;
+}
+
+.ed-seg {
+  display: flex;
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+}
+
+.ed-seg button {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 4px 8px;
+  line-height: 1.3;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.ed-seg button + button {
+  border-left: 1px solid var(--line-2);
+}
+
+.ed-seg button b {
+  font-weight: 600;
+}
+
+.ed-seg button span {
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.ed-seg button[aria-pressed="true"] {
+  background: #23324f;
+  color: #fff;
+  box-shadow: inset 0 0 0 1px #3d74e8;
+  cursor: default;
+}
+
+.ed-seg button:disabled {
+  color: #6b7385;
+  cursor: not-allowed;
+}
+
+/* One-line choices (비율, 회전 · 뒤집기, 출력 크기). */
+.ed-seg.tight button {
+  flex-direction: row;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 4px;
+  font-size: 13px;
+}
+
+.ed-seg.tight button.mono {
+  font-size: 12px;
+}
+
+/* 크롭 off: the ratios still turn it on. */
+.ed-seg.dim {
+  opacity: 0.55;
+}
+
+/* ---------------------------------------------------------------- 모자이크 · 블러 */
+
+.ed-mask-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ed-strength {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.ed-strength-head,
+.ed-strength-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ed-strength-head .mono {
+  color: var(--text);
+}
+
+.ed-strength-foot {
+  font-size: 11px;
+  color: #8b93a1;
+}
+
+.ed-strength input {
+  width: 100%;
+  accent-color: #ffb27f;
+}
+
+/* 시작 · 끝 one per row: a time and its 재생 위치 button need the panel's width. */
+.ed-mask-times {
+  display: grid;
+  gap: 8px;
+}
+
+.ed-mask-time {
+  display: flex;
+}
+
+.ed-mask-time .ed-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 8px;
+  font-size: 13px;
+}
+
+.ed-mask-now {
+  flex: none;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  border-left: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: #c3c8d2;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ed-mask-now:hover {
+  background: var(--panel);
+}
+
+/* The timeline's 가리기 row. */
+.ed-mask-lane {
+  position: relative;
+  height: 22px;
+  margin-top: 4px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.ed-mask-lane-title {
+  position: absolute;
+  left: 6px;
+  top: 0;
+  line-height: 20px;
+  font-size: 11px;
+  color: #8b93a1;
+  pointer-events: none;
+}
+
+.ed-mask-bar {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  padding: 0 5px;
+  overflow: hidden;
+  background: rgba(255, 178, 127, 0.3);
+  color: #ffd2b3;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 14px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.ed-mask-bar.selected {
+  z-index: 1;
+  background: #ffb27f;
+  color: #0e1014;
+  box-shadow: inset 3px 0 0 #fff, inset -3px 0 0 #fff;
+}
+
+.ed-mask-lane.overlay {
+  margin-top: -1px;
+}
+
+.ed-mask-lane.overlay .ed-mask-bar {
+  background: rgba(92, 200, 181, 0.3);
+  color: #b7efe5;
+}
+
+.ed-mask-lane.overlay .ed-mask-bar.selected {
+  background: #5cc8b5;
+  color: #0e1014;
+}
+
+.ed-cut-row.overlay.selected {
+  border-color: #2e8577;
+  background: #13282a;
+}
+
+.ed-cut-no.overlay {
+  background: #5cc8b5;
+  white-space: nowrap;
+}
+
+.ed-overlay-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ed-strength.overlay input {
+  accent-color: #5cc8b5;
+}
+
+.ed-corners button {
+  font-size: 15px;
+}
+
+.ed-mask-lane-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 2px;
+  margin-left: -1px;
+  background: #fff;
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- 화면 효과 */
+
+.ed-section-head.with-action {
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ed-section-head.with-action > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ed-link.blue {
+  flex: none;
+  min-height: 28px;
+  color: #8db4ff;
+  font-size: 12px;
+}
+
+.ed-fx-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ed-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ed-switch > span {
+  width: 8px;
+  height: 8px;
+  border: 1px solid #6b7385;
+}
+
+.ed-switch[aria-checked="true"] {
+  background: #23324f;
+  border-color: #3d74e8;
+  color: #fff;
+}
+
+.ed-switch[aria-checked="true"] > span {
+  background: #6ea0ff;
+  border-color: #6ea0ff;
+}
+
+.ed-fx-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+}
+
+.ed-fx-fields > .ed-fx-field + .ed-fx-field {
+  border-left: 1px solid var(--line-2);
+}
+
+.ed-fx-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 4px 8px 2px;
+  font-size: 11px;
+  color: #8b93a1;
+}
+
+.ed-fx-field:focus-within {
+  box-shadow: inset 0 0 0 1px #3d74e8;
+}
+
+.ed-fx-field input {
+  width: 100%;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  outline: none;
+}
+
+.ed-fx-size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #8b93a1;
+}
+
+.ed-fx-size > .ed-fx-field {
+  flex: 1 1 0;
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+}
+
+.ed-save {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--pad-y) var(--pad-x);
+}
+
+.ed-save-name {
+  font-size: 13px;
+}
+
+.ed-section > .ed-export {
+  padding: 0;
+}
+
+.ed-export {
+  min-height: var(--bar-h);
+  border: none;
+  border-radius: var(--radius);
+  background: var(--blue-strong);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ed-export:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ed-export-row {
+  display: flex;
+  gap: 8px;
+}
+
+.ed-export-row .ed-export {
+  flex: 1 1 auto;
+}
+
+.ed-done {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
