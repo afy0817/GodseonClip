@@ -432,7 +432,8 @@ pub fn proxy_args(input: &Path, video: &VideoStream, output: &Path) -> Vec<OsStr
     for s in ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-g", "15", "-fps_mode", "vfr"] {
         a.push(s.into());
     }
-    for s in ["-c:a", "aac", "-b:a", "96k", "-ac", "2", "-movflags", "+faststart"] {
+    a.extend(AAC_ENCODER.map(OsString::from));
+    for s in ["-b:a", "96k", "-ac", "2", "-movflags", "+faststart"] {
         a.push(s.into());
     }
     a.push(output.as_os_str().to_owned());
@@ -469,6 +470,9 @@ pub enum VideoCodec {
     H264,
     Hevc,
     Av1,
+    /// An animated GIF (FFmpeg's own `gif` encoder, a palette made for the clip): the editor's
+    /// export only, never 일괄 변환.
+    Gif,
 }
 
 /// What the user picked as the output video codec. `Source` ("원본 유지") re-encodes to the same
@@ -479,6 +483,7 @@ pub enum OutputCodec {
     Source,
     Hevc,
     Av1,
+    Gif,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -494,6 +499,14 @@ pub enum AudioPlan {
 
 pub const AUDIO_AAC_BITRATE: &str = "192k";
 
+/// FFmpeg's own AAC encoder with its coder named: `twoloop`. FFmpeg 9.1 made a new coder (`nmr`) the
+/// default, and in 9.1 it re-encodes one frame forever when digital silence comes right before a
+/// sharp sound at some alignments: a silent clip's 1 ms click 1 s or 2 s into a cut (not 0.5 or
+/// 1.5 s) at 160k and 192k never finished — 100 % CPU, the progress still printed every half second
+/// (measured, FFmpeg 9.1; FFmpeg issue 25580, fixed after 9.1). `twoloop` was the default before
+/// `nmr` and has this name back to FFmpeg 6.0, so every supported version encodes the same way.
+const AAC_ENCODER: [&str; 4] = ["-c:a", "aac", "-aac_coder", "twoloop"];
+
 /// `-fps_mode passthrough` keeps every frame with its own time, and this keeps those times as they
 /// are: by default the encoder counts in 1/frame rate, which rounds a variable rate's times onto
 /// that grid — a variable-rate MKV (frame rate 6480/179) put two frames on one time (measured, FFmpeg
@@ -501,6 +514,91 @@ pub const AUDIO_AAC_BITRATE: &str = "192k";
 /// 60 · 29.97 fps frames exactly, and anything else within 6 µs. A number, so FFmpeg 6.0 takes it
 /// (its `filter` / `demux` words came later).
 const KEEP_FRAME_TIMES: [&str; 4] = ["-fps_mode", "passthrough", "-enc_time_base:v", "1/90000"];
+
+/// 프레임레이트 the user may ask for a video (frames per second).
+pub const MAX_FRAME_RATE: u32 = 120;
+/// A GIF's frames last whole hundredths of a second, and browsers show a frame shorter than 2/100 s
+/// for 1/10 s: 50 fps is the most a GIF plays at everywhere.
+pub const GIF_MAX_FRAME_RATE: u32 = 50;
+/// 프레임레이트 of a GIF when "원본" is asked of a source whose rate ffprobe could not tell.
+pub const GIF_FALLBACK_FRAME_RATE: u32 = 15;
+/// The smallest GIF 크기 (짧은 변) the user may ask for; the largest is [`effects::MAX_SIDE`].
+pub const GIF_MIN_SHORT: u32 = 16;
+
+/// What happens to the picture after the 화면 효과, for the result's format: fewer frames per second
+/// (프레임레이트, the `fps` filter — first, so the rest works on the frames that stay) and, for a GIF,
+/// a smaller picture (GIF 크기, last). Default: neither.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Finish {
+    /// `fps=` value; None keeps every frame with its own time.
+    pub fps: Option<f64>,
+    /// `scale=W:H` (+ `setsar=1`) to this; None keeps the size the 화면 효과 made.
+    pub scale: Option<[u32; 2]>,
+}
+
+/// The source's frames per second: the average (what a variable-rate phone video really holds),
+/// else the stream's rate.
+pub fn source_rate(video: &VideoStream) -> Option<f64> {
+    video.avg_fps.filter(|r| r.is_finite() && *r > 0.0).or(video.fps.filter(|r| r.is_finite() && *r > 0.0))
+}
+
+/// The `fps` a result gets for the 프레임레이트 `cap` the user chose (None: 원본). Never more frames
+/// than the source has: a cap at or above the source's rate keeps every frame (None), as 출력 크기
+/// never makes the picture larger. A GIF always goes through `fps` — its frame times are hundredths
+/// of a second, so a variable rate would round onto uneven steps — at most [`GIF_MAX_FRAME_RATE`].
+pub fn plan_frame_rate(video: &VideoStream, cap: Option<u32>, gif: bool) -> Result<Option<f64>, Msg> {
+    let max = if gif { GIF_MAX_FRAME_RATE } else { MAX_FRAME_RATE };
+    if let Some(c) = cap
+        && (c == 0 || c > max)
+    {
+        return Err(Msg::FrameRateOutOfRange { min: 1, max });
+    }
+    let source = source_rate(video);
+    if gif {
+        let limit = f64::from(cap.unwrap_or(GIF_MAX_FRAME_RATE));
+        return Ok(Some(match source {
+            Some(r) => r.min(limit),
+            None => f64::from(cap.unwrap_or(GIF_FALLBACK_FRAME_RATE)),
+        }));
+    }
+    Ok(match (cap, source) {
+        (None, _) => None,
+        (Some(c), Some(r)) if f64::from(c) >= r - 0.01 => None,
+        (Some(c), _) => Some(f64::from(c)),
+    })
+}
+
+/// `fps=…:round=up`: frame k of the result is the source frame on screen at k / rate — the last one
+/// starting at or before it, so a result starts on the frame at IN as every 정밀 export does. `fps`
+/// rounds each frame's time onto the new grid and keeps the last frame of each step: with its
+/// default (`near`) the frames up to half a step after k / rate counted for k, and 25 → 5 fps showed
+/// source frames #2, #7, #12 … instead of #0, #5, #10 (measured, FFmpeg 6.1).
+fn fps_filter(rate: f64) -> String {
+    format!("fps={}:round=up", rate_text(rate))
+}
+
+/// `30`, `30000/1001` (an NTSC rate), else six decimals: what `fps=` is given.
+fn rate_text(rate: f64) -> String {
+    if (rate - rate.round()).abs() < 1e-6 {
+        return format!("{}", rate.round() as u64);
+    }
+    let ntsc = (rate * 1.001).round();
+    if (rate - ntsc * 1000.0 / 1001.0).abs() < 1e-4 {
+        return format!("{}/1001", ntsc as u64 * 1000);
+    }
+    format!("{rate:.6}")
+}
+
+/// GIF 크기: the picture made smaller so its short side is `short` (never larger), from the size it
+/// has after the 화면 효과.
+pub fn plan_gif_scale(picture: [u32; 2], short: Option<u32>) -> Result<Option<[u32; 2]>, Msg> {
+    let Some(s) = short else { return Ok(None) };
+    if !(GIF_MIN_SHORT..=effects::MAX_SIDE).contains(&s) {
+        return Err(Msg::OutputSizeInvalid { min: GIF_MIN_SHORT, max: effects::MAX_SIDE });
+    }
+    Ok(effects::short_side_size(picture[0], picture[1], s))
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -512,14 +610,18 @@ pub struct PreciseTrimPlan {
     pub codec: VideoCodec,
     /// 10-bit output (10-bit or HDR source, H.265 · AV1 only).
     pub ten_bit: bool,
+    /// Always `None` for a GIF.
     pub audio: AudioPlan,
-    /// Output file name suffix (`_trim`, `_trim_h265`, `_h265`…).
+    /// Output file name suffix (`_trim`, `_trim_h265`, `_h265`…; a whole-file GIF has none).
     pub suffix: String,
-    /// Output container extension.
+    /// Output container extension (`gif` for a GIF).
     pub extension: String,
     /// 화면 효과 (crop · turn · size) before the colors; None: the picture as it is. Planned by
     /// [`effects::plan`] and set by the caller (`export::prepare`).
     pub effects: Option<EffectsPlan>,
+    /// 프레임레이트 · GIF 크기 after the 화면 효과 ([`plan_frame_rate`] · [`plan_gif_scale`]), set by
+    /// the caller as `effects` is.
+    pub finish: Finish,
     /// The first audio track's stream index (PiP sound is mixed into it).
     pub first_audio: Option<u32>,
 }
@@ -533,6 +635,7 @@ fn keeps_container(codec: VideoCodec, ext: &str) -> bool {
     match codec {
         VideoCodec::H264 | VideoCodec::Hevc => matches!(ext, "mp4" | "m4v" | "mov" | "mkv"),
         VideoCodec::Av1 => matches!(ext, "mp4" | "mkv"),
+        VideoCodec::Gif => false,
     }
 }
 
@@ -548,6 +651,7 @@ fn precise_target(info: &MediaInfo, output: OutputCodec) -> Result<PreciseTarget
     let codec = match output {
         OutputCodec::Hevc => VideoCodec::Hevc,
         OutputCodec::Av1 => VideoCodec::Av1,
+        OutputCodec::Gif => VideoCodec::Gif,
         OutputCodec::Source => match video.codec.as_str() {
             "hevc" => VideoCodec::Hevc,
             "av1" => VideoCodec::Av1,
@@ -558,18 +662,22 @@ fn precise_target(info: &MediaInfo, output: OutputCodec) -> Result<PreciseTarget
         .extension()
         .map(|e| e.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let extension = if output == OutputCodec::Source && keeps_container(codec, &source_ext.to_ascii_lowercase()) {
+    let extension = if codec == VideoCodec::Gif {
+        "gif".to_string()
+    } else if output == OutputCodec::Source && keeps_container(codec, &source_ext.to_ascii_lowercase()) {
         source_ext
     } else {
         "mp4".to_string()
     };
-    Ok(PreciseTarget { codec, ten_bit: codec != VideoCodec::H264 && video.wants_ten_bit(), extension })
+    // A GIF has 256 colors of 8 bits: no 10 bits to keep.
+    let ten_bit = matches!(codec, VideoCodec::Hevc | VideoCodec::Av1) && video.wants_ten_bit();
+    Ok(PreciseTarget { codec, ten_bit, extension })
 }
 
-/// `_h265` · `_av1` after `_trim` / `_cut`; nothing for "원본 유지".
+/// `_h265` · `_av1` after `_trim` / `_cut`; nothing for "원본 유지" and GIF (`.gif` says it).
 fn codec_suffix(output: OutputCodec) -> &'static str {
     match output {
-        OutputCodec::Source => "",
+        OutputCodec::Source | OutputCodec::Gif => "",
         OutputCodec::Hevc => "_h265",
         OutputCodec::Av1 => "_av1",
     }
@@ -581,14 +689,17 @@ pub fn plan_precise_trim(info: &MediaInfo, start: f64, end: f64, output: OutputC
     let range = plan::keep_from_trim(start, end, info.duration)?;
     let target = precise_target(info, output)?;
     let whole = range.start <= WHOLE_FILE_SLACK && range.end >= info.duration - WHOLE_FILE_SLACK;
-    let audio = if info.audio.is_empty() {
+    let gif = target.codec == VideoCodec::Gif;
+    let audio = if info.audio.is_empty() || gif {
         AudioPlan::None
     } else if whole && info.audio.iter().all(|a| a.codec == "aac") {
         AudioPlan::Copy
     } else {
         AudioPlan::Aac
     };
+    // The whole file as a GIF: `.gif` already tells it from the original (`클립.gif`).
     let suffix = match (whole, codec_suffix(output)) {
+        (true, "") if gif => String::new(),
         (true, "") => "_trim".to_string(),
         (true, s) => s.to_string(),
         (false, s) => format!("_trim{s}"),
@@ -602,6 +713,7 @@ pub fn plan_precise_trim(info: &MediaInfo, start: f64, end: f64, output: OutputC
         suffix,
         extension: target.extension,
         effects: None,
+        finish: Finish::default(),
         first_audio: info.audio.first().map(|a| a.index),
     })
 }
@@ -615,13 +727,15 @@ pub struct PreciseCutPlan {
     pub duration: f64,
     pub codec: VideoCodec,
     pub ten_bit: bool,
-    /// Never `Copy`: the cuts decode the audio anyway.
+    /// Never `Copy`: the cuts decode the audio anyway. `None` for a GIF.
     pub audio: AudioPlan,
-    /// `_cut`, `_cut_h265`, `_cut_av1`.
+    /// `_cut`, `_cut_h265`, `_cut_av1` (a GIF: `_cut`).
     pub suffix: String,
     pub extension: String,
     /// 화면 효과, applied to the joined picture (they do not change with time).
     pub effects: Option<EffectsPlan>,
+    /// 프레임레이트 · GIF 크기, on the joined picture.
+    pub finish: Finish,
     pub first_audio: Option<u32>,
 }
 
@@ -638,6 +752,7 @@ impl PreciseCutPlan {
                 suffix: self.suffix.clone(),
                 extension: self.extension.clone(),
                 effects: self.effects.clone(),
+                finish: self.finish,
                 first_audio: self.first_audio,
             }),
             _ => None,
@@ -674,10 +789,11 @@ pub fn plan_precise_cut(info: &MediaInfo, removed: &[plan::Range], output: Outpu
         keep,
         codec: target.codec,
         ten_bit: target.ten_bit,
-        audio: if info.audio.is_empty() { AudioPlan::None } else { AudioPlan::Aac },
+        audio: if info.audio.is_empty() || target.codec == VideoCodec::Gif { AudioPlan::None } else { AudioPlan::Aac },
         suffix: format!("_cut{}", codec_suffix(output)),
         extension: target.extension,
         effects: None,
+        finish: Finish::default(),
         first_audio: info.audio.first().map(|a| a.index),
     })
 }
@@ -866,10 +982,16 @@ fn overlay_matrix(video: &VideoStream) -> &'static str {
     }
 }
 
-/// The filters that do not change with time: the 화면 효과's crop · turn · flip · scale · pad, then
-/// the source's colors (`setparams`).
-fn picture_layer(video: &VideoStream, effects: Option<&EffectsPlan>) -> Vec<String> {
-    let mut chain = effects.map(effect_filters).unwrap_or_default();
+/// The filters that do not change with time: 프레임레이트 (`fps`, first — the rest works on the
+/// frames that stay), the 화면 효과's crop · turn · flip · scale · pad, GIF 크기 (`flags=lanczos`, sharp
+/// when made much smaller), then the source's colors (`setparams`).
+fn picture_layer(video: &VideoStream, effects: Option<&EffectsPlan>, finish: &Finish) -> Vec<String> {
+    let mut chain: Vec<String> = finish.fps.map(fps_filter).into_iter().collect();
+    chain.extend(effects.map(effect_filters).unwrap_or_default());
+    if let Some([w, h]) = finish.scale {
+        chain.push(format!("scale={w}:{h}:flags=lanczos"));
+        chain.push("setsar=1".into());
+    }
     chain.extend(color_filter(video));
     chain
 }
@@ -880,8 +1002,8 @@ fn overlay_inputs(effects: Option<&EffectsPlan>) -> usize {
 }
 
 /// The re-encoded picture's filter graph, from `from` (a label, or None for `-vf`'s own input) to
-/// `to` (None for `-vf`'s output): 모자이크 · 블러, PiP, then — when `picture` — the other 화면 효과
-/// and the source's colors ([`picture_layer`]). None when there is nothing to do. The PiP inputs are
+/// `to` (None for `-vf`'s output): 모자이크 · 블러, PiP, then `layer` — the other 화면 효과 and the
+/// source's colors ([`picture_layer`]), or nothing. None when there is nothing to do. The PiP inputs are
 /// numbered from `first_input` ([`overlay_input_args`]); with PiP, `from` must be a label (a
 /// `-filter_complex`). `tag` keeps the labels of several graphs in one `-filter_complex` apart
 /// (one per kept piece of a 구간 제거).
@@ -906,10 +1028,10 @@ fn picture_graph(
     from: Option<&str>,
     to: Option<&str>,
     first_input: usize,
-    picture: bool,
+    layer: &[String],
     tag: &str,
 ) -> Option<String> {
-    let chain = if picture { picture_layer(video, effects) } else { Vec::new() };
+    let chain = layer;
     let label = |l: Option<&str>| l.map(|l| format!("[{l}]")).unwrap_or_default();
     let masks = effects.map(|e| e.masks.as_slice()).unwrap_or_default();
     let overlays = effects.map(|e| e.overlays.as_slice()).unwrap_or_default();
@@ -1054,6 +1176,7 @@ pub fn precise_trim_args(
     }
     a.extend(["-i".into(), input.as_os_str().to_owned()]);
     let effects = plan.effects.as_ref();
+    let layer = picture_layer(video, effects, &plan.finish);
     let pip = effects.is_some_and(|e| !e.overlays.is_empty());
     // PiP brings more inputs: a -filter_complex with the source's streams by number.
     a.extend(overlay_input_args(effects));
@@ -1069,7 +1192,7 @@ pub fn precise_trim_args(
     };
     if pip {
         let v = format!("0:{}", video.index);
-        let mut graph = picture_graph(video, effects, Some(&v), Some("v"), 1, true, "").expect("PiP is something to do");
+        let mut graph = picture_graph(video, effects, Some(&v), Some("v"), 1, &layer, "").expect("PiP is something to do");
         if let Some(m) = &mix {
             graph.push(';');
             graph.push_str(m);
@@ -1091,14 +1214,17 @@ pub fn precise_trim_args(
     if plan.codec == VideoCodec::Hevc && mp4 {
         a.extend(["-tag:v".into(), "hvc1".into()]);
     }
-    if !pip && let Some(graph) = picture_graph(video, effects, None, None, 1, true, "") {
+    if !pip && let Some(graph) = picture_graph(video, effects, None, None, 1, &layer, "") {
         a.extend(["-vf".into(), graph.into()]);
     }
     a.extend(KEEP_FRAME_TIMES.map(OsString::from));
     match plan.audio {
         AudioPlan::None => {}
         AudioPlan::Copy => a.extend(["-c:a".into(), "copy".into()]),
-        AudioPlan::Aac => a.extend(["-c:a".into(), "aac".into(), "-b:a".into(), AUDIO_AAC_BITRATE.into()]),
+        AudioPlan::Aac => {
+            a.extend(AAC_ENCODER.map(OsString::from));
+            a.extend(["-b:a".into(), AUDIO_AAC_BITRATE.into()]);
+        }
     }
     a.extend(["-map_metadata".into(), "0".into()]);
     if mp4 {
@@ -1138,9 +1264,16 @@ fn piece_layers(keep: &[plan::Range], effects: Option<&EffectsPlan>) -> Vec<Opti
 /// [`CUT_END_MARGIN`] — and by 23 ms in a file without sound), and everything after a join moved.
 ///
 /// Masks and PiP run on each piece before the join, on the piece's own timeline (`layers`, numbered
-/// from the inputs after the pieces, PiP sound mixed into the piece's first track); crop · turn ·
-/// size and the colors run once, on the joined picture.
-fn concat_graph(keep: &[plan::Range], video: &VideoStream, audio: &[crate::probe::AudioStream], effects: Option<&EffectsPlan>, layers: &[Option<EffectsPlan>]) -> String {
+/// from the inputs after the pieces, PiP sound mixed into the piece's first track); 프레임레이트,
+/// crop · turn · size and the colors run once, on the joined picture ([`picture_layer`]).
+fn concat_graph(
+    keep: &[plan::Range],
+    video: &VideoStream,
+    audio: &[crate::probe::AudioStream],
+    effects: Option<&EffectsPlan>,
+    finish: &Finish,
+    layers: &[Option<EffectsPlan>],
+) -> String {
     let pieces = keep.len();
     let mut stmts = Vec::new();
     let mut join = String::new();
@@ -1148,7 +1281,7 @@ fn concat_graph(keep: &[plan::Range], video: &VideoStream, audio: &[crate::probe
     for (i, (k, local)) in keep.iter().zip(layers).enumerate() {
         let tag = format!("s{i}_");
         let own = format!("{i}:{}", video.index);
-        match picture_graph(video, local.as_ref(), Some(&own), Some(&format!("fv{i}")), input, false, &tag) {
+        match picture_graph(video, local.as_ref(), Some(&own), Some(&format!("fv{i}")), input, &[], &tag) {
             Some(g) => {
                 stmts.push(g);
                 join.push_str(&format!("[fv{i}]"));
@@ -1172,7 +1305,7 @@ fn concat_graph(keep: &[plan::Range], video: &VideoStream, audio: &[crate::probe
         join.push_str(&format!("[fz{i}]"));
         input += overlay_inputs(local.as_ref());
     }
-    let layer = picture_layer(video, effects);
+    let layer = picture_layer(video, effects, finish);
     let outs: String = (0..audio.len()).map(|t| format!("[a{t}]")).collect();
     let picture = if layer.is_empty() { "[v]" } else { "[vc]" };
     stmts.push(format!("{join}concat=n={pieces}:v=1:a={}{picture}{outs}[fz]", audio.len() + 1));
@@ -1216,7 +1349,7 @@ pub fn precise_cut_args(
     for local in &layers {
         a.extend(overlay_input_args(local.as_ref()));
     }
-    a.extend(["-filter_complex".into(), concat_graph(&plan.keep, video, audio, plan.effects.as_ref(), &layers).into()]);
+    a.extend(["-filter_complex".into(), concat_graph(&plan.keep, video, audio, plan.effects.as_ref(), &plan.finish, &layers).into()]);
     a.extend(["-map".into(), "[v]".into()]);
     for k in 0..audio.len() {
         a.extend(["-map".into(), format!("[a{k}]").into()]);
@@ -1228,7 +1361,8 @@ pub fn precise_cut_args(
     }
     a.extend(KEEP_FRAME_TIMES.map(OsString::from));
     if !audio.is_empty() {
-        a.extend(["-c:a".into(), "aac".into(), "-b:a".into(), AUDIO_AAC_BITRATE.into()]);
+        a.extend(AAC_ENCODER.map(OsString::from));
+        a.extend(["-b:a".into(), AUDIO_AAC_BITRATE.into()]);
     }
     for (k, track) in audio.iter().enumerate() {
         if let Some(lang) = track.language.as_deref().filter(|l| !l.is_empty() && *l != "und") {
@@ -1241,6 +1375,165 @@ pub fn precise_cut_args(
     }
     a.push(output.as_os_str().to_owned());
     Ok(a)
+}
+
+// ---------------------------------------------------------------------------------------------
+// GIF (편집기 내보내기 → GIF): the precise export's picture — the same inputs, cuts, 화면 효과,
+// 프레임레이트 — in two FFmpeg runs. A GIF holds 256 colors per frame: the first run reads the
+// whole picture into one palette made for it (`palettegen` → `palette.png` in a scratch folder),
+// the second maps every frame onto that palette (`paletteuse`) and writes the GIF. One run that
+// split the picture into both filters (the usual one-liner) has `paletteuse` hold every frame
+// until `palettegen` has seen the last one: memory grows with the clip (720p · 60 s at 15 fps
+// ≈ 1.2 GB of frames); two runs read the source twice and hold nothing. Measured with FFmpeg 6.1.
+
+/// Which of a GIF's two runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GifPass {
+    /// The picture → `palettegen` → the palette file. The picture also goes to a `null` output, so
+    /// FFmpeg's progress (`out_time`) moves while the palette waits for the last frame.
+    Palette,
+    /// The picture and the palette → `paletteuse` → the GIF.
+    Frames,
+}
+
+/// `palettegen` · `paletteuse` options of a 품질 preset. 고화질: one palette from every pixel
+/// (`full`) and error-diffusion dithering (`sierra2_4a`, FFmpeg's default — the smoothest
+/// gradients); 균형: the palette from what moves (`diff`) and only the changed rectangle of each
+/// frame written; 작은 용량: 128 colors and ordered dithering (`bayer`, whose fixed pattern
+/// compresses well and does not crawl from frame to frame). All 256 (or 128) colors are for the
+/// picture: a video frame needs no transparent entry. On synthetic 640×360 · 15 fps clips the sizes
+/// came out 100 · 96–101 · 73 % (FFmpeg 6.1); not VMAF-calibrated like the video presets.
+pub fn gif_palette(quality: Quality) -> (&'static str, &'static str) {
+    match quality {
+        Quality::High => ("max_colors=256:reserve_transparent=0:stats_mode=full", "dither=sierra2_4a"),
+        Quality::Balanced => ("max_colors=256:reserve_transparent=0:stats_mode=diff", "dither=sierra2_4a:diff_mode=rectangle"),
+        Quality::Small => ("max_colors=128:reserve_transparent=0:stats_mode=diff", "dither=bayer:bayer_scale=4:diff_mode=rectangle"),
+    }
+}
+
+/// A GIF's picture: the inputs (with their `-ss` · `-t`) and the graph that ends at `[v]`.
+struct GifPicture {
+    inputs: Vec<OsString>,
+    /// How many inputs: the palette's index in the second run.
+    count: usize,
+    graph: String,
+}
+
+/// 자르기 as a GIF: the precise trim's input and picture, but `-t` before `-i` (an input option, as
+/// each piece of a 구간 제거 has it) — `palettegen` gives its palette when its input ends, and an
+/// output `-t` would leave the input running to the end of the file.
+fn gif_trim_picture(input: &Path, video: &VideoStream, plan: &PreciseTrimPlan) -> GifPicture {
+    let mut inputs = Vec::new();
+    if let Some(seek) = plan.seek {
+        inputs.extend(["-ss".into(), exact_secs(seek).into(), "-t".into(), precise_len(plan.duration).into()]);
+    }
+    inputs.extend(["-i".into(), input.as_os_str().to_owned()]);
+    let effects = plan.effects.as_ref();
+    inputs.extend(overlay_input_args(effects));
+    let from = format!("0:{}", video.index);
+    let layer = picture_layer(video, effects, &plan.finish);
+    let graph = picture_graph(video, effects, Some(&from), Some("v"), 1, &layer, "").unwrap_or_else(|| format!("[{from}]null[v]"));
+    GifPicture { inputs, count: 1 + overlay_inputs(effects), graph }
+}
+
+/// 구간 제거 as a GIF: the precise cut's pieces and `concat` ([`concat_graph`]) without sound.
+fn gif_cut_picture(input: &Path, video: &VideoStream, plan: &PreciseCutPlan) -> GifPicture {
+    let mut inputs = Vec::new();
+    for k in &plan.keep {
+        inputs.extend(["-ss".into(), exact_secs(k.start).into(), "-t".into(), precise_len(k.len()).into()]);
+        inputs.extend(["-i".into(), input.as_os_str().to_owned()]);
+    }
+    let layers = piece_layers(&plan.keep, plan.effects.as_ref());
+    for local in &layers {
+        inputs.extend(overlay_input_args(local.as_ref()));
+    }
+    let count = plan.keep.len() + layers.iter().map(|l| overlay_inputs(l.as_ref())).sum::<usize>();
+    GifPicture { inputs, count, graph: concat_graph(&plan.keep, video, &[], plan.effects.as_ref(), &plan.finish, &layers) }
+}
+
+/// Where a GIF's picture becomes RGB (`palettegen` · `paletteuse` take only RGB): a `scale` right
+/// after the source's colors (`setparams`, the end of [`picture_layer`]), which reads the YUV matrix
+/// from them. Without it FFmpeg turned the picture into RGB where the format had to change first —
+/// right after the decoder, or in GIF 크기's `scale` — before `setparams`, so a source that names
+/// its colors only in its container (MKV · MOV tags, no bitstream VUI) was read with the BT.601
+/// guess: a BT.2020 (PQ) red 0xE01818 came out (224, 22, 24) instead of (231, 30, 20), and a
+/// BT.709 one shifts the same way (measured, FFmpeg 9.1, test `hdr_gif_shows_the_colors_…`).
+const GIF_TO_RGB: &str = "scale";
+
+/// One run of a GIF: [`GifPass::Palette`] writes `palette` (a PNG; `-update 1` writes that one
+/// file, whatever its path holds), [`GifPass::Frames`] reads it (`-pattern_type none`: a `%` in the
+/// folder's name is not an image-sequence pattern) and writes `output`, looping forever. Every frame
+/// keeps the time `fps` gave it; the muxer turns those into hundredths of a second.
+///
+/// The picture becomes RGB in a `scale` of its own after the source's colors ([`GIF_TO_RGB`]).
+fn gif_args(p: GifPicture, quality: Quality, pass: GifPass, palette: &Path, output: &Path) -> Vec<OsString> {
+    let (make, use_) = gif_palette(quality);
+    let mut a = job_prefix();
+    a.extend(p.inputs);
+    match pass {
+        GifPass::Palette => {
+            let graph = format!("{};[v]{GIF_TO_RGB},split[gifp][gifn];[gifp]palettegen={make}[gifpal]", p.graph);
+            a.extend(["-filter_complex".into(), graph.into()]);
+            a.extend(["-map".into(), "[gifpal]".into(), "-update".into(), "1".into(), "-frames:v".into(), "1".into()]);
+            a.push(palette.as_os_str().to_owned());
+            a.extend(["-map", "[gifn]", "-f", "null", "-"].map(OsString::from));
+        }
+        GifPass::Frames => {
+            a.extend(["-f", "image2", "-pattern_type", "none", "-i"].map(OsString::from));
+            a.push(palette.as_os_str().to_owned());
+            let graph = format!("{};[v]{GIF_TO_RGB}[gifrgb];[gifrgb][{}:v]paletteuse={use_}[gif]", p.graph, p.count);
+            a.extend(["-filter_complex".into(), graph.into(), "-map".into(), "[gif]".into()]);
+            a.extend(["-c:v", "gif", "-loop", "0", "-fps_mode", "passthrough"].map(OsString::from));
+            a.push(output.as_os_str().to_owned());
+        }
+    }
+    a
+}
+
+/// 자르기 (or the whole file) as a GIF, one of its two runs (see [`GifPass`]).
+pub fn gif_trim_args(
+    input: &Path,
+    video: &VideoStream,
+    plan: &PreciseTrimPlan,
+    quality: Quality,
+    pass: GifPass,
+    palette: &Path,
+    output: &Path,
+) -> Result<Vec<OsString>, Msg> {
+    if plan.codec != VideoCodec::Gif {
+        return Err(Msg::EncoderUnsupported { encoder: "gif".into() });
+    }
+    Ok(gif_args(gif_trim_picture(input, video, plan), quality, pass, palette, output))
+}
+
+/// 구간 제거 as a GIF, one of its two runs; a single piece left is a trim.
+pub fn gif_cut_args(
+    input: &Path,
+    info: &MediaInfo,
+    plan: &PreciseCutPlan,
+    quality: Quality,
+    pass: GifPass,
+    palette: &Path,
+    output: &Path,
+) -> Result<Vec<OsString>, Msg> {
+    let video = info.video.as_ref().ok_or(Msg::PreciseNeedsVideo)?;
+    if let Some(trim) = plan.as_trim() {
+        return gif_trim_args(input, video, &trim, quality, pass, palette, output);
+    }
+    if plan.keep.is_empty() {
+        return Err(Msg::NothingKept);
+    }
+    if plan.codec != VideoCodec::Gif {
+        return Err(Msg::EncoderUnsupported { encoder: "gif".into() });
+    }
+    Ok(gif_args(gif_cut_picture(input, video, plan), quality, pass, palette, output))
+}
+
+/// A GIF's scratch folder next to the result, as a lossless cut's ([`cut_scratch_dir`]): it holds
+/// the palette between the two runs.
+pub fn gif_scratch_dir(final_path: &Path, tag: &str) -> PathBuf {
+    let dir = final_path.parent().map(Path::to_path_buf).unwrap_or_default();
+    dir.join(format!(".godseon-gif-{tag}"))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1274,6 +1567,7 @@ impl Container {
             VideoCodec::Hevc => matches!(self, Container::Mp4 | Container::Mkv | Container::Mov),
             VideoCodec::Av1 => matches!(self, Container::Mp4 | Container::Mkv | Container::Webm),
             VideoCodec::H264 => self != Container::Webm,
+            VideoCodec::Gif => false,
         }
     }
 
@@ -1357,6 +1651,9 @@ pub struct ConvertOptions {
     pub audio: AudioChoice,
     /// 10비트 also for 8-bit sources (10-bit and HDR sources are always kept in 10 bits).
     pub ten_bit: bool,
+    /// 프레임레이트: at most this many frames per second ([`plan_frame_rate`]); None (or absent): 원본.
+    #[serde(default)]
+    pub frame_rate: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -1364,6 +1661,8 @@ pub struct ConvertOptions {
 pub struct ConvertPlan {
     pub codec: VideoCodec,
     pub ten_bit: bool,
+    /// `fps=` when the frame rate is brought down; None keeps every frame.
+    pub fps: Option<f64>,
     /// `scale=…` when the picture is made smaller; None keeps the source size.
     pub scale: Option<String>,
     /// The picture as shown, after the downscale: [width, height].
@@ -1383,7 +1682,7 @@ fn scale_filter(size: [u32; 2]) -> String {
 /// 일괄 변환 of one file: codec, bit depth, size and audio from `opts`.
 pub fn plan_convert(info: &MediaInfo, opts: &ConvertOptions) -> Result<ConvertPlan, Msg> {
     let video = info.video.as_ref().ok_or(Msg::ConvertNeedsVideo)?;
-    if opts.codec == VideoCodec::H264 {
+    if matches!(opts.codec, VideoCodec::H264 | VideoCodec::Gif) {
         return Err(Msg::ConvertCodecUnsupported);
     }
     if !opts.container.holds(opts.codec) {
@@ -1414,6 +1713,7 @@ pub fn plan_convert(info: &MediaInfo, opts: &ConvertOptions) -> Result<ConvertPl
     Ok(ConvertPlan {
         codec: opts.codec,
         ten_bit: opts.ten_bit || video.wants_ten_bit(),
+        fps: plan_frame_rate(video, opts.frame_rate, false)?,
         scale,
         size,
         audio,
@@ -1423,9 +1723,9 @@ pub fn plan_convert(info: &MediaInfo, opts: &ConvertOptions) -> Result<ConvertPl
 }
 
 /// One FFmpeg process for the whole file: [`precise_trim_args`] without `-ss` · `-t`, with the
-/// downscale before the colors in one `-vf` (measured: the same pixels and color tags in either
-/// order, HDR 10-bit through libx265 and VideoToolbox), the container's tag and flags, and the
-/// planned audio. Video and every audio track; subtitles, data tracks and attached pictures stay out.
+/// frame rate (`fps`, first) and the downscale before the colors in one `-vf` (measured: the same
+/// pixels and color tags in either order, HDR 10-bit through libx265 and VideoToolbox), the
+/// container's tag and flags, and the planned audio. Video and every audio track; subtitles, data tracks and attached pictures stay out.
 pub fn convert_args(
     input: &Path,
     video: &VideoStream,
@@ -1480,7 +1780,8 @@ fn convert_args_over(
     if plan.codec == VideoCodec::Hevc && mp4 {
         a.extend(["-tag:v".into(), "hvc1".into()]);
     }
-    let filters: Vec<String> = plan.scale.iter().cloned().chain(color_filter(video)).collect();
+    let fps = plan.fps.map(fps_filter);
+    let filters: Vec<String> = fps.into_iter().chain(plan.scale.iter().cloned()).chain(color_filter(video)).collect();
     if !filters.is_empty() {
         a.extend(["-vf".into(), filters.join(",").into()]);
     }
@@ -1488,7 +1789,10 @@ fn convert_args_over(
     match plan.audio {
         AudioOut::None => {}
         AudioOut::Copy => a.extend(["-c:a".into(), "copy".into()]),
-        AudioOut::Aac { bitrate } => a.extend(["-c:a".into(), "aac".into(), "-b:a".into(), format!("{bitrate}k").into()]),
+        AudioOut::Aac { bitrate } => {
+            a.extend(AAC_ENCODER.map(OsString::from));
+            a.extend(["-b:a".into(), format!("{bitrate}k").into()]);
+        }
         AudioOut::Opus { bitrate } => {
             a.extend(["-af".into(), OPUS_LAYOUTS.into()]);
             a.extend(["-c:a".into(), "libopus".into(), "-b:a".into(), format!("{bitrate}k").into()]);
@@ -1761,7 +2065,7 @@ mod tests {
                 "-map", "0:1", "-map", "0:a:0?",
                 "-vf", "scale=-2:540", "-pix_fmt", "yuv420p",
                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-g", "15", "-fps_mode", "vfr",
-                "-c:a", "aac", "-b:a", "96k", "-ac", "2", "-movflags", "+faststart",
+                "-c:a", "aac", "-aac_coder", "twoloop", "-b:a", "96k", "-ac", "2", "-movflags", "+faststart",
                 "/cache/proxies/0123456789abcdef.part.mp4",
             ]
         );
@@ -1831,7 +2135,7 @@ mod tests {
                 "-c:v", "libx265", "-crf", "24", "-preset", "medium", "-x265-params", "log-level=error",
                 "-pix_fmt", "yuv420p", "-tag:v", "hvc1",
                 "-fps_mode", "passthrough", "-enc_time_base:v", "1/90000",
-                "-c:a", "aac", "-b:a", "192k",
+                "-c:a", "aac", "-aac_coder", "twoloop", "-b:a", "192k",
                 "-map_metadata", "0", "-movflags", "+faststart",
                 "/v/제주 여행_trim_h265.part.mp4",
             ]
@@ -1943,7 +2247,7 @@ mod tests {
                 "-tag:v", "hvc1",
                 "-vf", "crop=1216:2160:1312:0,scale=1080:1920,setsar=1,setparams=color_primaries=bt2020:color_trc=arib-std-b67:colorspace=bt2020nc",
                 "-fps_mode", "passthrough", "-enc_time_base:v", "1/90000",
-                "-c:a", "aac", "-b:a", "192k",
+                "-c:a", "aac", "-aac_coder", "twoloop", "-b:a", "192k",
                 "-map_metadata", "0", "-movflags", "+faststart",
                 "/v/아이폰 세로 크롭_trim_h265.part.mp4",
             ]
@@ -2005,7 +2309,7 @@ mod tests {
                 "-map", "[v]", "-map", "[a0]",
                 "-c:v", "libsvtav1", "-crf", "38", "-preset", "8", "-pix_fmt", "yuv420p",
                 "-fps_mode", "passthrough", "-enc_time_base:v", "1/90000",
-                "-c:a", "aac", "-b:a", "192k",
+                "-c:a", "aac", "-aac_coder", "twoloop", "-b:a", "192k",
                 "-map_metadata", "0", "-map_chapters", "-1", "-movflags", "+faststart",
                 "/v/회의 녹화 화면_cut_av1.part.mp4",
             ]
@@ -2153,7 +2457,7 @@ mod tests {
                 "-map", "[fxmix]", "-map", "0:a?", "-map", "-0:a:0",
                 "-c:v", "libx264", "-crf", "24", "-preset", "medium", "-pix_fmt", "yuv420p",
                 "-fps_mode", "passthrough", "-enc_time_base:v", "1/90000",
-                "-c:a", "aac", "-b:a", "192k",
+                "-c:a", "aac", "-aac_coder", "twoloop", "-b:a", "192k",
                 "-map_metadata", "0", "-movflags", "+faststart",
                 "/v/o.part.mp4",
             ]
@@ -2284,7 +2588,7 @@ mod tests {
                 "-map", "0:0", "-map", "0:a?",
                 "-c:v", "libx264", "-crf", "24", "-preset", "medium", "-pix_fmt", "yuv420p",
                 "-fps_mode", "passthrough", "-enc_time_base:v", "1/90000",
-                "-c:a", "aac", "-b:a", "192k",
+                "-c:a", "aac", "-aac_coder", "twoloop", "-b:a", "192k",
                 "-map_metadata", "0",
                 "/v/회의 녹화_trim.part.mkv",
             ]
@@ -2448,7 +2752,7 @@ mod tests {
                 "-c:v", "libx265", "-crf", "24", "-preset", "medium", "-x265-params", "log-level=error",
                 "-pix_fmt", "yuv420p", "-tag:v", "hvc1",
                 "-fps_mode", "passthrough", "-enc_time_base:v", "1/90000",
-                "-c:a", "aac", "-b:a", "192k",
+                "-c:a", "aac", "-aac_coder", "twoloop", "-b:a", "192k",
                 "-metadata:s:a:0", "language=kor",
                 "-map_metadata", "0", "-map_chapters", "-1", "-movflags", "+faststart",
                 "/v/제주 여행 0412_cut_h265.part.mp4",
@@ -2726,7 +3030,7 @@ mod tests {
     }
 
     fn opts(codec: VideoCodec, container: Container, resolution: Resolution, audio: AudioChoice, ten_bit: bool) -> ConvertOptions {
-        ConvertOptions { codec, container, resolution, audio, ten_bit }
+        ConvertOptions { codec, container, resolution, audio, ten_bit, frame_rate: None }
     }
 
     #[test]
@@ -2758,7 +3062,7 @@ mod tests {
                 "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1",
                 "-vf", "scale=1280:720",
                 "-fps_mode", "passthrough", "-enc_time_base:v", "1/90000",
-                "-c:a", "aac", "-b:a", "192k",
+                "-c:a", "aac", "-aac_coder", "twoloop", "-b:a", "192k",
                 "-map_metadata", "0", "-movflags", "+faststart",
                 "/변환 결과/회의 녹화 01_h265.part.mp4",
             ]
@@ -2862,7 +3166,7 @@ mod tests {
                 "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1",
                 "-vf", "scale=1280:720",
                 "-fps_mode", "passthrough", "-enc_time_base:v", "1/90000",
-                "-c:a", "aac", "-b:a", "192k",
+                "-c:a", "aac", "-aac_coder", "twoloop", "-b:a", "192k",
                 "-map_metadata", "0", "-movflags", "+faststart",
                 "/캐시/예상 크기/sample-1.part.mp4",
             ]
@@ -2978,5 +3282,214 @@ mod tests {
         let (f, p) = output_paths_in(&out, &input, "_av1", Some("webm"), &|q| q == out.join("여행 01_av1.part.webm"));
         assert_eq!((f, p), (out.join("여행 01_av1 (1).webm"), out.join("여행 01_av1 (1).part.webm")));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // --- 프레임레이트 · GIF -------------------------------------------------------------------
+
+    fn rated(fps: Option<f64>, avg: Option<f64>) -> VideoStream {
+        let mut v = media(MOV, 0).video.unwrap();
+        (v.fps, v.avg_fps) = (fps, avg);
+        v
+    }
+
+    #[test]
+    fn frame_rate_caps_never_add_frames() {
+        let sixty = rated(Some(60.0), Some(60.0));
+        assert_eq!(plan_frame_rate(&sixty, None, false), Ok(None), "원본");
+        assert_eq!(plan_frame_rate(&sixty, Some(30), false), Ok(Some(30.0)));
+        assert_eq!(plan_frame_rate(&sixty, Some(60), false), Ok(None), "the source's own rate");
+        assert_eq!(plan_frame_rate(&sixty, Some(120), false), Ok(None), "never more frames");
+        // 29.97: a cap of 30 keeps it; a variable-rate phone video is judged by its average.
+        let ntsc = rated(Some(30000.0 / 1001.0), Some(30000.0 / 1001.0));
+        assert_eq!(plan_frame_rate(&ntsc, Some(30), false), Ok(None));
+        assert_eq!(plan_frame_rate(&ntsc, Some(24), false), Ok(Some(24.0)));
+        let phone = rated(Some(120.0), Some(29.6));
+        assert_eq!(plan_frame_rate(&phone, Some(60), false), Ok(None), "120 is the timebase guess, 29.6 the frames");
+        assert_eq!(plan_frame_rate(&rated(None, None), Some(30), false), Ok(Some(30.0)), "unknown rate: the cap");
+        assert_eq!(plan_frame_rate(&rated(Some(25.0), None), Some(24), false), Ok(Some(24.0)), "no average: the stream's rate");
+        for bad in [0, 121] {
+            assert_eq!(plan_frame_rate(&sixty, Some(bad), false), Err(Msg::FrameRateOutOfRange { min: 1, max: 120 }));
+        }
+        // A GIF always gets fps: the cap, else the source's rate up to 50.
+        assert_eq!(plan_frame_rate(&sixty, Some(15), true), Ok(Some(15.0)));
+        assert_eq!(plan_frame_rate(&sixty, None, true), Ok(Some(50.0)), "60 fps would hit browsers' 2/100 s floor");
+        assert_eq!(plan_frame_rate(&ntsc, None, true), Ok(Some(30000.0 / 1001.0)));
+        assert_eq!(plan_frame_rate(&rated(Some(12.0), Some(12.0)), Some(15), true), Ok(Some(12.0)), "never more frames");
+        assert_eq!(plan_frame_rate(&rated(None, None), None, true), Ok(Some(15.0)));
+        assert_eq!(plan_frame_rate(&sixty, Some(51), true), Err(Msg::FrameRateOutOfRange { min: 1, max: 50 }));
+    }
+
+    #[test]
+    fn rates_go_to_fps_as_whole_numbers_or_ntsc_fractions() {
+        assert_eq!(rate_text(30.0), "30");
+        assert_eq!(rate_text(30000.0 / 1001.0), "30000/1001");
+        assert_eq!(rate_text(24000.0 / 1001.0), "24000/1001");
+        assert_eq!(rate_text(60000.0 / 1001.0), "60000/1001");
+        assert_eq!(rate_text(12.5), "12.500000");
+        assert_eq!(rate_text(29.6), "29.600000");
+    }
+
+    #[test]
+    fn gif_size_is_a_short_side_cap() {
+        assert_eq!(plan_gif_scale([1920, 1080], Some(360)), Ok(Some([640, 360])));
+        assert_eq!(plan_gif_scale([1080, 1920], Some(240)), Ok(Some([240, 426])), "portrait: the width is the short side");
+        assert_eq!(plan_gif_scale([640, 360], Some(480)), Ok(None), "never larger");
+        assert_eq!(plan_gif_scale([1920, 1080], None), Ok(None));
+        assert_eq!(plan_gif_scale([1920, 1080], Some(8)), Err(Msg::OutputSizeInvalid { min: 16, max: 8192 }));
+    }
+
+    /// 프레임레이트 on a video export: `fps` first in the picture's filters, the frames' times kept.
+    #[test]
+    fn precise_exports_bring_the_frame_rate_down_first() {
+        let mut info = sized(clip("/v/폰 영상 60.mp4", "h264", &["aac"]), 1920, 1080, None);
+        info.video.as_mut().unwrap().color_primaries = Some("bt709".into());
+        let v = info.video.clone().unwrap();
+        let mut plan = plan_precise_trim(&info, 1.0, 4.0, OutputCodec::Hevc).unwrap();
+        plan.finish = Finish { fps: Some(30.0), scale: None };
+        let a = strs(&precise_trim_args(Path::new("/v/a.mp4"), &v, &plan, "libx265", Quality::Balanced, Path::new("/v/b.mp4")).unwrap());
+        let at = a.iter().position(|x| x == "-vf").unwrap();
+        assert_eq!(a[at + 1], "fps=30:round=up,setparams=color_primaries=bt709");
+        assert!(a.windows(2).any(|w| w == ["-fps_mode", "passthrough"]));
+        // With a crop the rate still goes first; a 구간 제거 brings it down once, on the joined picture.
+        let mut cut = plan_precise_cut(&info, &[rr(2.0, 3.0)], OutputCodec::Hevc).unwrap();
+        let e = crate::effects::Effects { crop: Some(crate::effects::Crop { x: 0, y: 0, width: 1280, height: 720, ratio: None }), ..Default::default() };
+        cut.effects = fx(e, &v);
+        cut.finish = Finish { fps: Some(24.0), scale: None };
+        let a = strs(&precise_cut_args(Path::new("/v/a.mp4"), &info, &cut, "libx265", Quality::Balanced, Path::new("/v/b.mp4")).unwrap());
+        let graph = &a[a.iter().position(|x| x == "-filter_complex").unwrap() + 1];
+        assert!(graph.ends_with(";[vc]fps=24:round=up,crop=1280:720:0:0,setparams=color_primaries=bt709[v]"), "{graph}");
+        // Without any other filter, `fps` alone.
+        let mut bare = plan_precise_trim(&clip("/v/a.mp4", "h264", &[]), 1.0, 4.0, OutputCodec::Source).unwrap();
+        bare.finish.fps = Some(15.0);
+        let a = strs(&precise_trim_args(Path::new("/v/a.mp4"), &media(MOV, 0).video.unwrap(), &bare, "libx264", Quality::Balanced, Path::new("/v/b.mp4")).unwrap());
+        assert!(a.windows(2).any(|w| w == ["-vf", "fps=15:round=up"]), "{a:?}");
+    }
+
+    #[test]
+    fn gif_plans_have_no_sound_no_ten_bits_and_gif_names() {
+        let mut info = clip("/v/여행.mov", "hevc", &["aac"]);
+        info.video.as_mut().unwrap().pix_fmt = Some("yuv420p10le".into());
+        let whole = plan_precise_trim(&info, 0.0, 10.0, OutputCodec::Gif).unwrap();
+        assert_eq!(
+            (whole.codec, whole.ten_bit, whole.audio, whole.suffix.as_str(), whole.extension.as_str(), whole.seek),
+            (VideoCodec::Gif, false, AudioPlan::None, "", "gif", None)
+        );
+        let part = plan_precise_trim(&info, 2.0, 5.0, OutputCodec::Gif).unwrap();
+        assert_eq!((part.suffix.as_str(), part.audio), ("_trim", AudioPlan::None));
+        let cut = plan_precise_cut(&info, &[rr(2.0, 3.0)], OutputCodec::Gif).unwrap();
+        assert_eq!((cut.suffix.as_str(), cut.extension.as_str(), cut.audio, cut.ten_bit), ("_cut", "gif", AudioPlan::None, false));
+        // A GIF never goes through the video encoders, and 일괄 변환 cannot make one.
+        assert!(precise_trim_args(Path::new("/v/a"), info.video.as_ref().unwrap(), &part, "gif", Quality::Balanced, Path::new("/v/b")).is_err());
+        let o = ConvertOptions { codec: VideoCodec::Gif, container: Container::Mp4, resolution: Resolution::Source, audio: AudioChoice::CopyOrAac, ten_bit: false, frame_rate: None };
+        assert_eq!(plan_convert(&info, &o).unwrap_err(), Msg::ConvertCodecUnsupported);
+        // The video arguments refuse a plan that is not a GIF.
+        let hevc = plan_precise_trim(&info, 2.0, 5.0, OutputCodec::Hevc).unwrap();
+        assert!(gif_trim_args(Path::new("/v/a"), info.video.as_ref().unwrap(), &hevc, Quality::Balanced, GifPass::Palette, Path::new("p.png"), Path::new("o.gif")).is_err());
+    }
+
+    /// 자르기 → GIF: the palette run (input `-t`, the picture split to `palettegen` and a `null`
+    /// output for the progress), then the frames run with the palette as the last input.
+    #[test]
+    fn gif_trim_snapshot_palette_then_frames() {
+        let info = sized(clip("/v/여행 100%.mp4", "h264", &["aac"]), 1920, 1080, None);
+        let v = info.video.clone().unwrap();
+        let mut plan = plan_precise_trim(&info, 2.0, 5.0, OutputCodec::Gif).unwrap();
+        plan.finish = Finish { fps: plan_frame_rate(&v, Some(15), true).unwrap(), scale: plan_gif_scale([1920, 1080], Some(360)).unwrap() };
+        let palette = Path::new("/v/.godseon-gif-1/palette.png");
+        let out = Path::new("/v/여행 100%_trim.part.gif");
+        let first = gif_trim_args(Path::new("/v/여행 100%.mp4"), &v, &plan, Quality::Balanced, GifPass::Palette, palette, out).unwrap();
+        let picture = "[0:0]fps=15:round=up,scale=640:360:flags=lanczos,setsar=1[v]";
+        assert_eq!(
+            strs(&first),
+            vec![
+                "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-y",
+                "-ss", "2.000000", "-t", "2.999000", "-i", "/v/여행 100%.mp4",
+                "-filter_complex",
+                &format!("{picture};[v]scale,split[gifp][gifn];[gifp]palettegen=max_colors=256:reserve_transparent=0:stats_mode=diff[gifpal]"),
+                "-map", "[gifpal]", "-update", "1", "-frames:v", "1", "/v/.godseon-gif-1/palette.png",
+                "-map", "[gifn]", "-f", "null", "-",
+            ]
+        );
+        let second = gif_trim_args(Path::new("/v/여행 100%.mp4"), &v, &plan, Quality::Balanced, GifPass::Frames, palette, out).unwrap();
+        assert_eq!(
+            strs(&second),
+            vec![
+                "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-y",
+                "-ss", "2.000000", "-t", "2.999000", "-i", "/v/여행 100%.mp4",
+                "-f", "image2", "-pattern_type", "none", "-i", "/v/.godseon-gif-1/palette.png",
+                "-filter_complex",
+                &format!("{picture};[v]scale[gifrgb];[gifrgb][1:v]paletteuse=dither=sierra2_4a:diff_mode=rectangle[gif]"),
+                "-map", "[gif]", "-c:v", "gif", "-loop", "0", "-fps_mode", "passthrough",
+                "/v/여행 100%_trim.part.gif",
+            ]
+        );
+        // The whole file: no -ss · -t; 작은 용량's palette.
+        let mut whole = plan_precise_trim(&info, 0.0, 10.0, OutputCodec::Gif).unwrap();
+        whole.finish.fps = Some(10.0);
+        let a = strs(&gif_trim_args(Path::new("/v/a.mp4"), &v, &whole, Quality::Small, GifPass::Frames, palette, out).unwrap());
+        assert_eq!(&a[7..9], ["-i", "/v/a.mp4"]);
+        assert!(a.iter().any(|x| x.ends_with("[v]scale[gifrgb];[gifrgb][1:v]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle[gif]")), "{a:?}");
+    }
+
+    /// 구간 제거 → GIF with a PiP logo: the pieces joined without sound (the silent reference track
+    /// only), the logo's input after the pieces, the palette after every input.
+    #[test]
+    fn gif_cut_snapshot_numbers_the_palette_after_every_input() {
+        use crate::effects::{Effects, Overlay};
+        use crate::probe::OverlayKind;
+        let info = sized(clip("/v/회의.mp4", "h264", &["aac"]), 1920, 1080, None);
+        let v = info.video.clone().unwrap();
+        let mut plan = plan_precise_cut(&info, &[rr(2.0, 3.0)], OutputCodec::Gif).unwrap();
+        let e = Effects {
+            overlays: vec![Overlay { path: "/로고.png".into(), x: 40, y: 40, width: 200, height: 60, start: 0.0, end: 10.0, offset: 0.0, opacity: 100, audio: false, volume: 100 }],
+            ..Effects::default()
+        };
+        let mut p = crate::effects::plan(&v, &e).unwrap().unwrap();
+        p.attach_sources(vec![pip("/로고.png", OverlayKind::Image, None, false)]);
+        plan.effects = p.in_result(&plan.keep);
+        plan.finish = Finish { fps: Some(15.0), scale: Some([640, 360]) };
+        let palette = Path::new("/v/p.png");
+        let a = strs(&gif_cut_args(Path::new("/v/회의.mp4"), &info, &plan, Quality::High, GifPass::Frames, palette, Path::new("/v/o.gif")).unwrap());
+        // The logo covers both pieces: one input for each, as the precise cut numbers them.
+        assert_eq!(
+            a[7..25],
+            [
+                "-ss", "0.000000", "-t", "1.999000", "-i", "/v/회의.mp4",
+                "-ss", "3.000000", "-t", "6.999000", "-i", "/v/회의.mp4",
+                "-i", "/로고.png", "-i", "/로고.png", "-f", "image2",
+            ]
+        );
+        let graph = &a[a.iter().position(|x| x == "-filter_complex").unwrap() + 1];
+        assert!(!graph.contains("[0:1]"), "no sound: {graph}");
+        assert!(graph.contains("concat=n=2:v=1:a=1[vc][fz];[fz]anullsink"), "{graph}");
+        assert!(graph.contains(";[vc]fps=15:round=up,scale=640:360:flags=lanczos,setsar=1[v]"), "{graph}");
+        assert!(graph.ends_with(";[v]scale[gifrgb];[gifrgb][4:v]paletteuse=dither=sierra2_4a[gif]"), "the palette is input 4: {graph}");
+        // One piece left: the trim's runs.
+        let mut one = plan_precise_cut(&info, &[rr(0.0, 3.0)], OutputCodec::Gif).unwrap();
+        one.finish.fps = Some(15.0);
+        let a = strs(&gif_cut_args(Path::new("/v/회의.mp4"), &info, &one, Quality::High, GifPass::Palette, palette, Path::new("/v/o.gif")).unwrap());
+        assert_eq!(a[7..13], ["-ss", "3.000000", "-t", "6.999000", "-i", "/v/회의.mp4"]);
+        assert_eq!(gif_scratch_dir(Path::new("/v/o.gif"), "7-1"), Path::new("/v/.godseon-gif-7-1"));
+    }
+
+    #[test]
+    fn convert_brings_the_frame_rate_down_before_the_downscale() {
+        let info = sized(clip("/v/폰 60.mp4", "h264", &["aac"]), 1920, 1080, None);
+        let mut v = info.clone();
+        (v.video.as_mut().unwrap().fps, v.video.as_mut().unwrap().avg_fps) = (Some(60.0), Some(60.0));
+        let mut o = opts(VideoCodec::Hevc, Container::Mp4, Resolution::P720, AudioChoice::CopyOrAac, false);
+        o.frame_rate = Some(30);
+        let plan = plan_convert(&v, &o).unwrap();
+        assert_eq!(plan.fps, Some(30.0));
+        let a = strs(&convert_args(Path::new("/v/폰 60.mp4"), v.video.as_ref().unwrap(), &plan, "libx265", Quality::Balanced, Path::new("/v/o.mp4")).unwrap());
+        assert!(a.windows(2).any(|w| w == ["-vf", "fps=30:round=up,scale=1280:720"]), "{a:?}");
+        // At or above the source's rate: nothing changes.
+        o.frame_rate = Some(60);
+        assert_eq!(plan_convert(&v, &o).unwrap().fps, None);
+        o.frame_rate = Some(500);
+        assert_eq!(plan_convert(&v, &o).unwrap_err(), Msg::FrameRateOutOfRange { min: 1, max: 120 });
+        // From the UI: `frameRate`, absent for older settings.
+        let ui: ConvertOptions = serde_json::from_str(r#"{"codec":"hevc","container":"mp4","resolution":"source","audio":"aac192","tenBit":false,"frameRate":24}"#).unwrap();
+        assert_eq!(ui.frame_rate, Some(24));
     }
 }

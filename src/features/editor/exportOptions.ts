@@ -1,11 +1,13 @@
-// What the export panel's choices (방식 · 비디오 코덱 · 품질) will produce, as the UI explains it
-// before exporting. Rust decides the real thing (command::plan_precise_trim); these mirror it.
+// What the export panel's choices (방식 · 비디오 코덱 · 품질 · 프레임레이트 · GIF 크기) will produce,
+// as the UI explains it before exporting. Rust decides the real thing (command::plan_precise_trim);
+// these mirror it.
 
-import type { EncoderChoice, ExportEncoders, ExportMode, MediaInfo, OutputCodec, Quality, VideoCodec } from "../../lib/ipc";
+import type { EncoderChoice, ExportEncoders, ExportMode, ExportRequest, MediaInfo, OutputCodec, Quality, VideoCodec } from "../../lib/ipc";
 import type { Messages } from "../../lib/i18n/ko.ts";
 import { say } from "../../lib/i18n/text.ts";
 // `.ts` so Node runs this module in `npm run test:ts` (queueView.test.ts).
 import { codecLabel } from "./format.ts";
+import { DEFAULT_GIF_RATE, DEFAULT_GIF_SHORT, gifScale, rateText, resultRate } from "./frameRate.ts";
 
 /** 자르기 (one kept range) or 구간 제거 (ranges to remove). */
 export type EditorMode = "trim" | "cut";
@@ -14,9 +16,35 @@ export interface ExportChoice {
   mode: ExportMode;
   codec: OutputCodec;
   quality: Quality;
+  /** 프레임레이트 of a video (정밀): at most this many fps; null: 원본. */
+  frameRate: number | null;
+  /** 프레임레이트 of a GIF, kept apart from the video's (a GIF wants far fewer); null: 원본 (≤ 50). */
+  gifRate: number | null;
+  /** GIF 크기: the short side at most this; null: the picture's. */
+  gifShort: number | null;
 }
 
-export const DEFAULT_EXPORT: ExportChoice = { mode: "lossless", codec: "source", quality: "balanced" };
+export const DEFAULT_EXPORT: ExportChoice = {
+  mode: "lossless",
+  codec: "source",
+  quality: "balanced",
+  frameRate: null,
+  gifRate: DEFAULT_GIF_RATE,
+  gifShort: DEFAULT_GIF_SHORT,
+};
+
+/** What the choice sends (lib.rs `ExportRequest` without the file and the edit): 무손실 sends no rate, a video no GIF 크기. */
+export function requestOptions(choice: ExportChoice): Pick<ExportRequest, "mode" | "codec" | "quality" | "frameRate" | "gifShort"> {
+  const gif = choice.codec === "gif";
+  const precise = choice.mode === "precise";
+  return {
+    mode: choice.mode,
+    codec: choice.codec,
+    quality: choice.quality,
+    frameRate: precise ? (gif ? choice.gifRate : choice.frameRate) : null,
+    gifShort: precise && gif ? choice.gifShort : null,
+  };
+}
 
 export const QUALITY_VALUES: Quality[] = ["high", "balanced", "small"];
 
@@ -38,7 +66,11 @@ export function targetCodec(codec: OutputCodec, sourceCodec: string | undefined)
   return sourceCodec === "hevc" ? "hevc" : sourceCodec === "av1" ? "av1" : "h264";
 }
 
+/** FFmpeg's own GIF encoder (export::gif_encoder): always there, never tested. */
+export const GIF_ENCODER: EncoderChoice = { name: "gif", label: "GIF", hardware: false, fallback: null, fallbackLabel: null };
+
 export function encoderFor(encoders: ExportEncoders | null, codec: VideoCodec): EncoderChoice | null {
+  if (codec === "gif") return GIF_ENCODER;
   return encoders ? encoders[codec] : null;
 }
 
@@ -55,11 +87,12 @@ function extensionOf(fileName: string): string {
 /**
  * `{suffix}.{ext}` of the result, as `command::plan_precise_trim` · `plan_precise_cut` and the
  * lossless exports name it (lossless: `_trim` / `_cut` + same container; 구간 제거 정밀: `_cut`,
- * `_cut_h265`, `_cut_av1`).
+ * `_cut_h265`, `_cut_av1`; GIF: `_trim` · `_cut` · nothing for the whole file, `.gif`).
  */
 export function outputEnding(info: MediaInfo, choice: ExportChoice, whole: boolean, editor: EditorMode = "trim"): { suffix: string; ext: string } {
   const sourceExt = extensionOf(info.fileName);
   if (choice.mode === "lossless") return { suffix: editor === "cut" ? "_cut" : "_trim", ext: sourceExt || "mkv" };
+  if (choice.codec === "gif") return { suffix: editor === "cut" ? "_cut" : whole ? "" : "_trim", ext: "gif" };
   const codec = targetCodec(choice.codec, info.video?.codec);
   const lower = sourceExt.toLowerCase();
   const keeps =
@@ -92,8 +125,10 @@ export function wantsTenBit(info: MediaInfo): boolean {
  * "인코더 자동 — VideoToolbox (하드웨어) · 실패하면 libx265로 다시 · 10비트 · HDR 유지".
  */
 export function encoderLine(t: Messages, info: MediaInfo, choice: ExportChoice, encoders: ExportEncoders | null): string | null {
-  if (choice.mode !== "precise" || !encoders) return null;
+  if (choice.mode !== "precise") return null;
   const w = t.encoderLine;
+  if (choice.codec === "gif") return info.video?.hdr ? `${w.gif} · ${w.gifHdr}` : w.gif;
+  if (!encoders) return null;
   const codec = targetCodec(choice.codec, info.video?.codec);
   const enc = encoderFor(encoders, codec);
   if (!enc) return missingEncoderText(t, codec);
@@ -111,4 +146,36 @@ export function encoderLine(t: Messages, info: MediaInfo, choice: ExportChoice, 
   }
   if (codec !== "h264" && wantsTenBit(info)) parts.push(info.video?.hdr ? w.tenBitHdr : w.tenBit);
   return parts.join(" · ");
+}
+
+/** "1280 × 720 · 30fps" — what 정밀 changes about the picture; empty when nothing. */
+export function pictureNote(t: Messages, size: [number, number] | null, rate: number | null): string {
+  const parts: string[] = [];
+  if (size) parts.push(`${size[0]} × ${size[1]}`);
+  if (rate !== null) parts.push(t.queueView.fps(rateText(rate)));
+  return parts.join(" · ");
+}
+
+/**
+ * The line under the result's name (ExportFooter). 무손실: the size to expect (`copySize`). 정밀: the
+ * result's size and frame rate when they change — `picture` (화면 효과's, null: the source's); a GIF
+ * always names its own, from `shown` (the picture after the 화면 효과) made GIF 크기.
+ */
+export function saveNote(
+  t: Messages,
+  info: MediaInfo,
+  choice: ExportChoice,
+  picture: [number, number] | null,
+  shown: [number, number] | null,
+  copySize: string | null,
+): string {
+  const w = t.exportPanel;
+  if (choice.mode !== "precise") return w.saveNoteLossless(copySize);
+  const gif = choice.codec === "gif";
+  const v = info.video;
+  const rate = v ? resultRate(v, gif ? choice.gifRate : choice.frameRate, gif) : null;
+  const size = gif && shown ? (gifScale(shown, choice.gifShort) ?? shown) : picture;
+  const what = pictureNote(t, size, rate);
+  if (gif) return w.saveNoteGif(what);
+  return what ? w.saveNotePreciseWith(what) : w.saveNotePrecise;
 }

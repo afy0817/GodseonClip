@@ -62,6 +62,8 @@ export type Msg =
   | { code: "openGopJoin"; at: number }
   | { code: "tempFolderFailed"; detail: string }
   | { code: "effectsNeedPrecise" }
+  | { code: "frameRateNeedsPrecise" }
+  | { code: "frameRateOutOfRange"; min: number; max: number }
   | { code: "cropOutsidePicture"; width: number; height: number }
   | { code: "cropTooSmall"; min: number }
   | { code: "outputSizeInvalid"; min: number; max: number }
@@ -264,10 +266,10 @@ export interface StartedJob {
 
 /** command::Quality — 고화질 · 균형 · 작은 용량. */
 export type Quality = "high" | "balanced" | "small";
-/** command::VideoCodec — the codec a re-encoded result has. */
-export type VideoCodec = "h264" | "hevc" | "av1";
+/** command::VideoCodec — the codec a re-encoded result has ("gif": the editor's export only). */
+export type VideoCodec = "h264" | "hevc" | "av1" | "gif";
 /** command::OutputCodec — "source" (원본 유지) re-encodes to the same codec, or H.264. */
-export type OutputCodec = "source" | "hevc" | "av1";
+export type OutputCodec = "source" | "hevc" | "av1" | "gif";
 /** ExportMode in lib.rs: 무손실 (stream copy) or 정밀 (re-encode). */
 export type ExportMode = "lossless" | "precise";
 /** command::AudioPlan */
@@ -283,7 +285,7 @@ export interface EncoderChoice {
   fallbackLabel: string | null;
 }
 
-/** encoders::ExportEncoders — null: no working encoder for that codec. */
+/** encoders::ExportEncoders — null: no working encoder for that codec (a GIF needs none of these). */
 export interface ExportEncoders {
   h264: EncoderChoice | null;
   hevc: EncoderChoice | null;
@@ -389,6 +391,10 @@ export interface ExportRequest {
   quality: Quality;
   /** 화면 효과: 정밀 only (Rust refuses them with 무손실). */
   effects: Effects;
+  /** 프레임레이트: 정밀 only, at most this many fps (never more than the source has); null: 원본. */
+  frameRate: number | null;
+  /** GIF 크기: a GIF's short side at most this (never larger); null: the picture's. Ignored for video. */
+  gifShort: number | null;
 }
 
 export interface ExportSummary {
@@ -408,8 +414,10 @@ export interface ExportSummary {
   pieces: number;
   /** Lossless 구간 제거: removed ranges stream copy cannot take out (between two keyframes). */
   keptRemovals: TimeRange[];
-  /** The result's [width, height] when 화면 효과 change the picture; null: the source's. */
+  /** The result's [width, height] when 화면 효과 or GIF 크기 change the picture; null: the source's. */
   picture: [number, number] | null;
+  /** The result's fps when 프레임레이트 (or a GIF) changes it; null: the source's. */
+  frameRate: number | null;
   /** 모자이크 · 블러 boxes that show in the result. */
   masks: number;
   /** PiP files that show in the result. */
@@ -448,6 +456,8 @@ export interface ConvertSettings {
   audio: AudioChoice;
   /** 10 bits also for 8-bit sources (10-bit and HDR sources always keep 10 bits). */
   tenBit: boolean;
+  /** 프레임레이트: at most this many fps (never more than the source has); null: 원본. */
+  frameRate: number | null;
   /** null: "자동" (hardware first, then software); else an encoder name from encoderOptions. */
   encoder: string | null;
   quality: Quality;
@@ -474,6 +484,8 @@ export interface ConvertSummary {
   hdr: boolean;
   /** Made smaller, to [width, height] as shown; null: the source size. */
   scaled: [number, number] | null;
+  /** Brought down to this many fps; null: every frame of the source. */
+  frameRate: number | null;
   audio: AudioOut;
   container: Container;
 }

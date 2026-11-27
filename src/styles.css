@@ -29,6 +29,12 @@
   /* Title bars (a panel section's or the timeline's title): their own fill and a brighter hairline. */
   --title-bg: #1d212b;
   --title-line: #2e3440;
+  /* Panels over the screen (the notification center, 2026-11-27 user request: "떠 있다는 느낌"): a
+     surface a step lighter than the panels under it, a brighter hairline, and a layered shadow — a
+     dark edge, a short close shadow and a wide soft one. Corners stay square. */
+  --overlay-bg: #1a1e26;
+  --overlay-line: #3a4150;
+  --overlay-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 6px 14px rgba(0, 0, 0, 0.5), 0 22px 56px rgba(0, 0, 0, 0.65);
   color-scheme: dark;
 }
 

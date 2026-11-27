@@ -6,6 +6,7 @@ import type { Messages } from "../../lib/i18n/ko.ts";
 import { say } from "../../lib/i18n/text.ts";
 import { formatBytes, formatTime } from "../../lib/time.ts";
 import { codecLabel, formatClock } from "../editor/format.ts";
+import { rateText } from "../editor/frameRate.ts";
 
 export interface QueueGroups {
   running: QueueItem[];
@@ -99,12 +100,13 @@ export function audioLabel(t: Messages, audio: AudioOut): string | null {
   }
 }
 
-/** ["일괄 변환", "H.265", "VideoToolbox", "균형", "1280×720로 축소", "10비트 · HDR", "MP4 · hvc1", "오디오 복사"]. */
+/** ["일괄 변환", "H.265", "VideoToolbox", "균형", "1280×720로 축소", "30fps", "10비트 · HDR", "MP4 · hvc1", "오디오 복사"]. */
 function convertTags(t: Messages, output: string, info: ConvertTask): string[] {
   const s = info.summary;
   const w = t.queueView;
   const tags = [t.kind.convert, codecLabel(s.codec), s.encoder, qualityLabel(t, info.quality)];
   if (s.scaled) tags.push(w.scaledTo(s.scaled[0], s.scaled[1]));
+  if (s.frameRate) tags.push(w.fps(rateText(s.frameRate)));
   if (s.tenBit) tags.push(s.hdr ? w.tenBitHdr : w.tenBit);
   tags.push(containerTag(output, s.codec));
   const audio = audioLabel(t, s.audio);
@@ -112,7 +114,10 @@ function convertTags(t: Messages, output: string, info: ConvertTask): string[] {
   return tags;
 }
 
-/** Tags under a running item's name: ["구간 제거 · 정밀", "H.265", "VideoToolbox", "균형", "MP4 · hvc1"]. */
+/**
+ * Tags under a running item's name: ["구간 제거 · 정밀", "H.265", "VideoToolbox", "균형", "MP4 · hvc1"];
+ * a GIF names itself once: ["자르기 · 정밀", "GIF", "균형", "화면 640×360", "15fps"].
+ */
 export function itemTags(t: Messages, item: QueueItem): string[] {
   const { info } = item;
   if (info.kind === "convert") return convertTags(t, item.output, info);
@@ -123,14 +128,16 @@ export function itemTags(t: Messages, item: QueueItem): string[] {
     const what = s.pieces > 1 ? `${edit} · ${w.lossless} · ${w.keptPieces(s.pieces)}` : `${edit} · ${w.lossless}`;
     return [what, w.streamCopy, containerTag(item.output, s.codec)];
   }
+  const gif = s.codec === "gif";
   const tags = [`${edit} · ${w.precise}`, codecLabel(s.codec)];
-  if (s.encoder) tags.push(s.encoder);
+  if (s.encoder && !gif) tags.push(s.encoder);
   tags.push(qualityLabel(t, info.quality));
   if (s.picture) tags.push(w.picture(s.picture[0], s.picture[1]));
+  if (s.frameRate) tags.push(w.fps(rateText(s.frameRate)));
   if (s.masks > 0) tags.push(w.masks(s.masks));
   if (s.overlays > 0) tags.push(w.overlays(s.overlays));
   if (s.tenBit) tags.push(w.tenBit);
-  tags.push(containerTag(item.output, s.codec));
+  if (!gif) tags.push(containerTag(item.output, s.codec));
   return tags;
 }
 
@@ -153,7 +160,8 @@ export function waitingLine(t: Messages, item: QueueItem): string {
   }
   const s = info.summary;
   const parts: string[] = [t.kind[info.edit]];
-  if (s.codec) parts.push(codecLabel(s.codec), ...(s.encoder ? [s.encoder] : []), qualityLabel(t, info.quality));
+  // A GIF's encoder is called GIF too: named once.
+  if (s.codec) parts.push(codecLabel(s.codec), ...(s.encoder && s.codec !== "gif" ? [s.encoder] : []), qualityLabel(t, info.quality));
   else parts.push(t.queueView.lossless);
   parts.push(formatTime(s.length));
   return parts.join(" · ");

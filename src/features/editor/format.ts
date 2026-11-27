@@ -9,6 +9,7 @@ const CODEC_LABELS: Record<string, string> = {
   h264: "H.264",
   hevc: "H.265",
   av1: "AV1",
+  gif: "GIF",
   vp9: "VP9",
   vp8: "VP8",
   prores: "ProRes",

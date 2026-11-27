@@ -1,11 +1,12 @@
 //! The editor's 내보내기 as a queue item: the edit (자르기 · 구간 제거) and the way (무손실 ·
-//! 정밀, codec, quality) planned into FFmpeg work, the result's names and a summary for the UI.
+//! 정밀, codec — H.265 · AV1 · GIF too —, quality, 프레임레이트) planned into FFmpeg work, the
+//! result's names and a summary for the UI.
 //!
 //! [`prepare`] plans before anything is queued, so a refused export shows in the editor at once;
 //! [`Prepared::into_task`] picks the names when the item joins the queue (never a name another
 //! queued item holds). Every FFmpeg argument still comes from `command.rs`.
 
-use crate::command::{self, AudioPlan, LosslessCutPlan, OutputCodec, PreciseCutPlan, PreciseTrimPlan, Quality, VideoCodec};
+use crate::command::{self, AudioPlan, Finish, LosslessCutPlan, OutputCodec, PreciseCutPlan, PreciseTrimPlan, Quality, VideoCodec};
 use crate::effects::{self, Effects};
 use crate::encoders::{self, EncoderChoice, EncoderReport};
 use crate::ffmpeg::FfmpegInfo;
@@ -57,6 +58,14 @@ pub struct ExportRequest {
     /// 화면 효과 (정밀 only); absent = none.
     #[serde(default)]
     pub effects: Effects,
+    /// 프레임레이트 (정밀 only): at most this many frames per second; absent or None = 원본 (a GIF:
+    /// the source's, at most [`command::GIF_MAX_FRAME_RATE`]).
+    #[serde(default)]
+    pub frame_rate: Option<u32>,
+    /// GIF 크기: the GIF's short side at most this (never larger); absent or None = the picture's.
+    /// Ignored for other codecs.
+    #[serde(default)]
+    pub gif_short: Option<u32>,
 }
 
 /// What the export will produce, for the UI.
@@ -80,8 +89,10 @@ pub struct ExportSummary {
     pub pieces: usize,
     /// Lossless 구간 제거: removed ranges stream copy cannot take out (between two keyframes).
     pub kept_removals: Vec<plan::Range>,
-    /// The result's width × height when 화면 효과 change the picture; None: the source's.
+    /// The result's width × height when 화면 효과 or GIF 크기 change the picture; None: the source's.
     pub picture: Option<[u32; 2]>,
+    /// The result's frames per second when 프레임레이트 (or a GIF) changes it; None: the source's.
+    pub frame_rate: Option<f64>,
     /// 모자이크 · 블러 boxes that show in the result.
     pub masks: usize,
     /// PiP files that show in the result.
@@ -103,6 +114,7 @@ impl ExportSummary {
             pieces: 1,
             kept_removals: Vec::new(),
             picture: None,
+            frame_rate: None,
             masks: 0,
             overlays: 0,
         }
@@ -143,6 +155,13 @@ enum How {
     Pieces { plan: LosslessCutPlan, video_index: u32, ffprobe: PathBuf, tag: String },
     /// Re-encoding with the chosen encoder, then its software fallback.
     Encode { plan: PrecisePlan, info: Box<MediaInfo>, choice: EncoderChoice, quality: Quality },
+    /// A GIF: the palette, then the frames (`jobs::gif_job`); `tag` names its scratch folder.
+    Gif { plan: PrecisePlan, info: Box<MediaInfo>, quality: Quality, tag: String },
+}
+
+/// FFmpeg's own GIF encoder: always there, nothing to test, no fallback.
+fn gif_encoder() -> EncoderChoice {
+    EncoderChoice { name: "gif".into(), label: "GIF".into(), hardware: false, fallback: None, fallback_label: None }
 }
 
 fn copied_audio(info: &MediaInfo) -> AudioPlan {
@@ -173,6 +192,9 @@ pub fn prepare(
         }
         (ExportMode::Lossless, _) if !req.effects.is_none() => {
             return Err(Msg::EffectsNeedPrecise);
+        }
+        (ExportMode::Lossless, _) if req.frame_rate.is_some() => {
+            return Err(Msg::FrameRateNeedsPrecise);
         }
         (ExportMode::Lossless, Edit::Trim { start, end }) => {
             let plan = command::plan_lossless_trim(info, keyframes, *start, *end)?;
@@ -241,22 +263,42 @@ pub fn prepare(
             let picture = picture.and_then(|p| p.in_result(&keep));
             let (picture_size, masks, overlays) = picture.as_ref().map_or((None, 0, 0), |p| (Some(p.size), p.masks.len(), p.overlays.len()));
             let mixes = command::mixes_overlay_audio(picture.as_ref());
+            let gif = VideoCodec::Gif == match &plan {
+                PrecisePlan::Trim(p) => p.codec,
+                PrecisePlan::Cut(p) => p.codec,
+            };
+            // 프레임레이트, and GIF 크기 from the size the 화면 효과 made.
+            let (w, h) = video.upright_size();
+            let shown = picture_size.unwrap_or([w, h]);
+            let finish = Finish {
+                fps: command::plan_frame_rate(video, req.frame_rate, gif)?,
+                scale: if gif { command::plan_gif_scale(shown, req.gif_short)? } else { None },
+            };
             match &mut plan {
                 PrecisePlan::Trim(p) => {
                     p.effects = picture;
+                    p.finish = finish;
                     // Mixing PiP sound re-encodes the audio.
                     if mixes && p.audio == AudioPlan::Copy {
                         p.audio = AudioPlan::Aac;
                     }
                 }
-                PrecisePlan::Cut(p) => p.effects = picture,
+                PrecisePlan::Cut(p) => {
+                    p.effects = picture;
+                    p.finish = finish;
+                }
             }
             let (codec, ten_bit, audio, visible_start, length, pieces) = match &plan {
                 PrecisePlan::Trim(p) => (p.codec, p.ten_bit, p.audio, p.seek.unwrap_or(0.0), p.duration, 1),
                 PrecisePlan::Cut(p) => (p.codec, p.ten_bit, p.audio, p.keep[0].start, p.duration, p.keep.len()),
             };
-            let choices = encoders::export_choices(&encoder_report());
-            let choice = choices.for_codec(codec).ok_or(Msg::NoEncoder { codec })?.clone();
+            // A GIF needs no encoder test: FFmpeg always has its own.
+            let choice = if gif {
+                gif_encoder()
+            } else {
+                let choices = encoders::export_choices(&encoder_report());
+                choices.for_codec(codec).ok_or(Msg::NoEncoder { codec })?.clone()
+            };
             let summary = ExportSummary {
                 visible_start,
                 exact_start: true,
@@ -268,11 +310,17 @@ pub fn prepare(
                 audio,
                 pieces,
                 kept_removals: Vec::new(),
-                picture: picture_size,
+                picture: finish.scale.or(picture_size),
+                frame_rate: finish.fps,
                 masks,
                 overlays,
             };
-            (summary, How::Encode { plan, info: Box::new(info.clone()), choice, quality: req.quality })
+            let how = if gif {
+                How::Gif { plan, info: Box::new(info.clone()), quality: req.quality, tag: scratch_tag() }
+            } else {
+                How::Encode { plan, info: Box::new(info.clone()), choice, quality: req.quality }
+            };
+            (summary, how)
         }
     };
     let edit = match req.edit {
@@ -337,6 +385,28 @@ impl Prepared {
                 }
                 let command_line = command::display_command(&program, &attempts[0].args);
                 let work = Work::Attempts { attempts, total_secs: length };
+                Ok(Task { info: task, program, work, final_path, part, command_line })
+            }
+            How::Gif { plan, info, quality, tag } => {
+                let (suffix, extension, length) = match &plan {
+                    PrecisePlan::Trim(p) => (&p.suffix, &p.extension, p.duration),
+                    PrecisePlan::Cut(p) => (&p.suffix, &p.extension, p.duration),
+                };
+                let (final_path, part) = command::output_paths_avoiding(&input, suffix, Some(extension), taken);
+                let video = info.video.clone().ok_or(Msg::NoVideoTrack)?;
+                let build = {
+                    let (program, input, final_path, part) = (program.clone(), input.clone(), final_path.clone(), part.clone());
+                    move || {
+                        let source = match &plan {
+                            PrecisePlan::Trim(p) => jobs::GifSource::Trim { video: &video, plan: p },
+                            PrecisePlan::Cut(p) => jobs::GifSource::Cut { info: &info, plan: p },
+                        };
+                        jobs::gif_job(&program, &input, source, quality, &final_path, &part, &tag)
+                    }
+                };
+                // Building only lists the commands: the scratch folder is made when the job runs.
+                let command_line = build()?.command_line;
+                let work = Work::Steps { build: Arc::new(build), length };
                 Ok(Task { info: task, program, work, final_path, part, command_line })
             }
         }
@@ -416,7 +486,16 @@ mod tests {
     const KF: [f64; 10] = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
 
     fn request(path: &Path, edit: Edit, mode: ExportMode, codec: OutputCodec) -> ExportRequest {
-        ExportRequest { path: path.display().to_string(), edit, mode, codec, quality: Quality::Balanced, effects: Effects::default() }
+        ExportRequest {
+            path: path.display().to_string(),
+            edit,
+            mode,
+            codec,
+            quality: Quality::Balanced,
+            effects: Effects::default(),
+            frame_rate: None,
+            gif_short: None,
+        }
     }
 
     fn report(tests: &[(&str, &str, bool)]) -> EncoderReport {
@@ -568,5 +647,69 @@ mod tests {
         assert_eq!(e, Msg::NoEncoder { codec: VideoCodec::Av1 });
         let nothing = request(input, Edit::Cut { removed: vec![] }, ExportMode::Lossless, OutputCodec::Source);
         assert!(prepare(&ff(), &info(input), &KF, &nothing, no_report).is_err());
+    }
+
+    /// What the editor sends for a GIF: GIF 크기 and 프레임레이트 next to the codec.
+    #[test]
+    fn gif_export_runs_as_two_steps_without_an_encoder_test() {
+        let dir = std::env::temp_dir().join(format!("godseon-export-gif-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("출장 브이로그.mp4");
+        let req: ExportRequest = serde_json::from_str(&format!(
+            r#"{{"path":{},"edit":{{"kind":"trim","start":1,"end":4}},"mode":"precise","codec":"gif","quality":"balanced","frameRate":15,"gifShort":120}}"#,
+            serde_json::to_string(&input.display().to_string()).unwrap()
+        ))
+        .unwrap();
+        assert_eq!((req.codec, req.frame_rate, req.gif_short), (OutputCodec::Gif, Some(15), Some(120)));
+        let prepared = prepare(&ff(), &info(&input), &KF, &req, no_report).unwrap();
+        let s = prepared.summary().clone();
+        assert_eq!(
+            (s.codec, s.encoder.as_deref(), s.fallback, s.audio, s.ten_bit, s.picture, s.frame_rate, s.length),
+            (Some(VideoCodec::Gif), Some("GIF"), None, AudioPlan::None, false, Some([160, 120]), Some(15.0), 3.0)
+        );
+        let task = prepared.into_task(&|_| false).unwrap();
+        assert_eq!((name(&task.final_path), name(&task.part)), ("출장 브이로그_trim.gif".into(), "출장 브이로그_trim.part.gif".into()));
+        let Work::Steps { length, .. } = &task.work else { panic!("palette, then frames") };
+        assert_eq!(*length, 3.0);
+        let lines: Vec<&str> = task.command_line.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("palettegen") && lines[1].contains("paletteuse"), "{lines:?}");
+        assert!(lines[0].contains("fps=15:round=up,scale=160:120:flags=lanczos"), "{}", lines[0]);
+        assert!(std::fs::read_dir(&dir).unwrap().next().is_none(), "no scratch folder until the job runs");
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        // A cut as a GIF, 원본 frame rate (the source's 25), the picture's own size.
+        let cut = ExportRequest {
+            frame_rate: None,
+            ..request(&input, Edit::Cut { removed: vec![plan::Range::new(1.2, 2.5), plan::Range::new(5.5, 6.5)] }, ExportMode::Precise, OutputCodec::Gif)
+        };
+        let prepared = prepare(&ff(), &info(&input), &KF, &cut, no_report).unwrap();
+        assert_eq!((prepared.summary().frame_rate, prepared.summary().picture, prepared.summary().pieces), (Some(25.0), None, 3));
+        let task = prepared.into_task(&|_| false).unwrap();
+        assert_eq!(name(&task.final_path), "출장 브이로그_cut.gif");
+        assert!(task.command_line.contains("concat=n=3"), "{}", task.command_line);
+    }
+
+    #[test]
+    fn frame_rate_needs_precise_and_shapes_the_video() {
+        let input = Path::new("/영상/a.mp4");
+        let mut req = request(input, Edit::Trim { start: 1.0, end: 4.0 }, ExportMode::Lossless, OutputCodec::Source);
+        req.frame_rate = Some(24);
+        assert_eq!(prepare(&ff(), &info(input), &KF, &req, no_report).err().unwrap(), Msg::FrameRateNeedsPrecise);
+        req.mode = ExportMode::Precise;
+        req.codec = OutputCodec::Hevc;
+        let prepared = prepare(&ff(), &info(input), &KF, &req, || report(&[("libx265", "hevc", false)])).unwrap();
+        assert_eq!((prepared.summary().frame_rate, prepared.summary().picture), (Some(24.0), None));
+        let task = prepared.into_task(&|_| false).unwrap();
+        let Work::Attempts { attempts, .. } = &task.work else { panic!() };
+        let args: Vec<String> = attempts[0].args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert!(args.windows(2).any(|w| w == ["-vf", "fps=24:round=up"]), "{args:?}");
+        // GIF 크기 means nothing for a video; a cap at the source's 25 fps changes nothing.
+        req.gif_short = Some(120);
+        req.frame_rate = Some(25);
+        let s = prepare(&ff(), &info(input), &KF, &req, || report(&[("libx265", "hevc", false)])).unwrap().summary().clone();
+        assert_eq!((s.frame_rate, s.picture), (None, None));
+        req.frame_rate = Some(0);
+        assert_eq!(prepare(&ff(), &info(input), &KF, &req, || report(&[("libx265", "hevc", false)])).err().unwrap(), Msg::FrameRateOutOfRange { min: 1, max: 120 });
     }
 }

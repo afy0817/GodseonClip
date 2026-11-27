@@ -1,6 +1,6 @@
 [package]
 name = "godseon-clip"
-version = "1.0.0"
+version = "1.1.0"
 description = "Cross-platform video trim, cut-out and H.265 / AV1 converter"
 authors = ["Godseon"]
 license = "MIT"

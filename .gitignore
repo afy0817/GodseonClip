@@ -12,8 +12,10 @@ dist
 dist-ssr
 *.local
 
-# Claude Code local rules and skills (not shared)
-.claude/
+# Claude Code local rules and skills (not shared) — except settings.json (attribution off, for cloud
+# sessions that clone the repo). `.claude/*`, not `.claude/`: an ignored folder cannot re-include a file.
+.claude/*
+!.claude/settings.json
 
 # Editor directories and files
 .vscode/*

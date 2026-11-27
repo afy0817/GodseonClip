@@ -107,11 +107,13 @@ test("settings: codec switch, ending, what is sent", () => {
     resolution: "source",
     audio: "copyOrAac",
     tenBit: false,
+    frameRate: null,
     encoder: null,
     quality: "balanced",
     outputDir: "/변환 결과",
     suffix: " 작게",
   });
+  assert.equal(toSettings({ ...DEFAULT_CONVERT, frameRate: 30 }).frameRate, 30);
   // Same cases as command::check_name_suffix.
   for (const ok of ["_h265", "", " 작게", "_v2", "-보관용 (2026)", "가".repeat(60)]) assert.equal(suffixProblem(ko, ok), null, ok);
   for (const bad of ["a/b", "a\\b", "a:b", "제목?", "x\u0007", "_작게.part", ".PART2", "가".repeat(61)]) assert.notEqual(suffixProblem(ko, bad), null, bad);

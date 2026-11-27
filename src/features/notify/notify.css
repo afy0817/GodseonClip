@@ -51,9 +51,10 @@
   flex-direction: column;
   overflow-y: auto;
   overscroll-behavior: contain;
-  background: var(--panel-2);
-  border: 1px solid var(--line-2);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  /* Floats over the screen: lighter than the panels under it, layered shadow (styles.css). */
+  background: var(--overlay-bg);
+  border: 1px solid var(--overlay-line);
+  box-shadow: var(--overlay-shadow);
   color: var(--text);
   font-size: 13px;
   text-align: left;

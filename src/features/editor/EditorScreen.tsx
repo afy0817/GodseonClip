@@ -12,6 +12,7 @@ import { useT } from "../../lib/i18n/I18n";
 import { api, type Crop, type Effects, isMovFamily, type Mask, type Msg, type Overlay, type OverlaySource, type ProbeResult, type QueueItem, toMsg, type VideoStream } from "../../lib/ipc";
 import type { PlaybackStatus } from "../../lib/playback";
 import type { QueueState } from "../../lib/useQueue";
+import { useOpenNotify } from "../notify/Notify";
 import { CutSection, type Marks, NO_MARKS } from "./CutSection";
 import { addRange, keepFromRemoved, minKeepLength, type Range, settle } from "./cutList";
 import { isNone, MAX_MASKS, MAX_OVERLAYS, NO_EFFECTS, newMask, newOverlay, type Orientation, overlayAfterTurn, planEffects, sameOrientation, settled, uprightSize } from "./effects";
@@ -19,7 +20,7 @@ import { type EffectsNote, EffectsSection } from "./EffectsSection";
 import { ExportFooter, type ExportProps, ExportSection } from "./ExportSection";
 import { MaskSection } from "./MaskSection";
 import { OverlaySection } from "./OverlaySection";
-import { DEFAULT_EXPORT, type EditorMode, encoderFor, type ExportChoice, isWholeFile, targetCodec } from "./exportOptions";
+import { DEFAULT_EXPORT, type EditorMode, encoderFor, type ExportChoice, isWholeFile, requestOptions, targetCodec } from "./exportOptions";
 import { frameStart, mediaSummary, stepFrame, typedFrameStart } from "./format";
 import { FolderIcon } from "./icons";
 import { losslessCutPreview } from "./losslessCut";
@@ -101,6 +102,7 @@ export function EditorScreen({ active, ffmpeg, mode, onKind, queue, queueCount, 
   const [followedId, setFollowedId] = useState<number | null>(null);
   const [queued, setQueued] = useState<QueueItem | null>(null);
   const seenInQueue = useRef(false);
+  const openNotify = useOpenNotify();
   const fromQueue = followedId === null ? undefined : queue.items.find((i) => i.id === followedId);
   if (fromQueue) seenInQueue.current = true;
   // Gone from a snapshot that had it: taken off the queue.
@@ -411,7 +413,8 @@ export function EditorScreen({ active, ffmpeg, mode, onKind, queue, queueCount, 
     } else if (c.mode !== choice.mode) setFxNote(null);
     setExportChoice(c);
   };
-  const exportEncoders = useExportEncoders(precise && ffmpeg.ready, ffmpeg.path, active);
+  // A GIF uses FFmpeg's own encoder: no encoder test to wait for.
+  const exportEncoders = useExportEncoders(precise && choice.codec !== "gif" && ffmpeg.ready, ffmpeg.path, active);
   const encoderReady = !precise || encoderFor(exportEncoders.encoders, targetCodec(choice.codec, v?.codec)) !== null;
   const editReady = cutMode
     ? v !== null && cuts.removed.length > 0 && keep.length > 0 && (losslessCut?.problem ?? null) === null
@@ -437,10 +440,12 @@ export function EditorScreen({ active, ffmpeg, mode, onKind, queue, queueCount, 
       const edit = cutMode
         ? { kind: "cut" as const, removed: cuts.removed }
         : { kind: "trim" as const, start: range.start, end: range.end };
-      const item = await api.queueExport({ path: info.path, edit, ...choice, effects: precise ? effects : NO_EFFECTS });
+      const item = await api.queueExport({ path: info.path, edit, ...requestOptions(choice), effects: precise ? effects : NO_EFFECTS });
       seenInQueue.current = false;
       setQueued(item);
       setFollowedId(item.id);
+      // In the queue: the notification center shows it, with its progress and cancel.
+      openNotify();
     } catch (e) {
       setExportError(toMsg(e));
     } finally {
@@ -454,6 +459,7 @@ export function EditorScreen({ active, ffmpeg, mode, onKind, queue, queueCount, 
     onChoice: changeChoice,
     effectsOn,
     picture: precise ? (planned.plan?.size ?? null) : null,
+    shown: v ? (planned.plan?.size ?? uprightSize(v)) : null,
     editor: mode,
     encoders: exportEncoders,
     length: resultLength,

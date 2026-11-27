@@ -6,7 +6,7 @@
 //! write the same `.part`). Every change is sent as a whole snapshot and progress as its own event,
 //! both while the queue is locked, so they arrive in the order they happened.
 
-use crate::jobs::{Attempt, CutJob, JobEvent, JobFinished, JobManager, JobProgress};
+use crate::jobs::{Attempt, StepsJob, JobEvent, JobFinished, JobManager, JobProgress};
 use crate::msg::Msg;
 use crate::settings::Lang;
 use serde::Serialize;
@@ -43,7 +43,7 @@ pub enum Work {
     /// One FFmpeg run, or attempts in order until one succeeds (hardware, then software).
     Attempts { attempts: Vec<Attempt>, total_secs: f64 },
     /// Several steps (무손실 구간 제거). Built each time the item starts, since steps run once.
-    Steps { build: Arc<dyn Fn() -> Result<CutJob, Msg> + Send + Sync>, length: f64 },
+    Steps { build: Arc<dyn Fn() -> Result<StepsJob, Msg> + Send + Sync>, length: f64 },
 }
 
 /// What [`Queue::add`] gets from the code that planned the item.
@@ -892,7 +892,7 @@ mod tests {
                         },
                         Step { args: Box::new(move || Ok(vec!["-c".into(), format!("cat '{}' > '{}'", piece2.display(), p2.display()).into()])), weight: 1.0 },
                     ];
-                    Ok(CutJob { steps, scratch: scratch.clone(), command_line: String::new() })
+                    Ok(StepsJob { steps, scratch: scratch.clone(), command_line: String::new() })
                 };
                 Ok(Task {
                     info: "구간 제거".to_string(),

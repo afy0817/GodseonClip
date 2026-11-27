@@ -148,6 +148,8 @@ impl ExportEncoders {
             VideoCodec::H264 => self.h264.as_ref(),
             VideoCodec::Hevc => self.hevc.as_ref(),
             VideoCodec::Av1 => self.av1.as_ref(),
+            // FFmpeg's own `gif` encoder: nothing to test or choose (`export::prepare`).
+            VideoCodec::Gif => None,
         }
     }
 }
@@ -187,6 +189,7 @@ fn codec_name(codec: VideoCodec) -> &'static str {
         VideoCodec::H264 => "h264",
         VideoCodec::Hevc => "hevc",
         VideoCodec::Av1 => "av1",
+        VideoCodec::Gif => "gif",
     }
 }
 

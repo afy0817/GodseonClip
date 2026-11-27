@@ -23,7 +23,8 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 // ---------------------------------------------------------------- proxy
 
 /// Bump when `command::proxy_args` changes, so proxies made by older versions are rebuilt.
-const PROXY_VERSION: u32 = 1;
+/// 2: AAC with the `twoloop` coder (`command::AAC_ENCODER`).
+const PROXY_VERSION: u32 = 2;
 
 /// Final and `.part` paths of the proxy of `input` inside `cache_dir`.
 ///

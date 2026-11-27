@@ -1,6 +1,9 @@
+import { useState } from "react";
 import { useT } from "../../lib/i18n/I18n";
 import { say } from "../../lib/i18n/text";
-import type { MediaInfo, Msg, OutputCodec, QueueItem } from "../../lib/ipc";
+import type { MediaInfo, Msg, OutputCodec, QueueItem, VideoStream } from "../../lib/ipc";
+import type { Messages } from "../../lib/i18n/ko.ts";
+import { NumberField } from "./EffectsSection";
 import {
   type EditorMode,
   encoderFor,
@@ -9,9 +12,11 @@ import {
   missingEncoderText,
   predictedExportName,
   qualities,
+  saveNote,
   targetCodec,
 } from "./exportOptions";
 import { codecLabel, estimateCopySize } from "./format";
+import { clampRate, GIF_MAX_FRAME_RATE, gifSizeButtons, MAX_FRAME_RATE, rateButtons, rateNote, rateText, sourceRate } from "./frameRate";
 import type { ExportEncodersState } from "./useExportEncoders";
 
 export interface ExportProps {
@@ -22,6 +27,8 @@ export interface ExportProps {
   effectsOn: boolean;
   /** The result's size with 화면 효과 (정밀); null: the source's. */
   picture: [number, number] | null;
+  /** The picture's size after the 화면 효과 (the upright source's without them): what GIF 크기 makes smaller. */
+  shown: [number, number] | null;
   /** 구간 제거 is named `_cut` (lossless: pieces joined by stream copy). */
   editor: EditorMode;
   encoders: ExportEncodersState;
@@ -39,11 +46,11 @@ export interface ExportProps {
 }
 
 /**
- * Export: lossless stream copy, or precise re-encoding to the same codec, H.265 or AV1 (canvas
- * Editor.dc.html). The choices scroll with the panel; what the result will be and 내보내기 are its
- * fixed foot (`ExportFooter`, the same props). 내보내기 adds a 작업 큐 item — its progress, cancel
- * and result are in the header's notification center (features/notify) — and pressing it again
- * while the item runs adds another one.
+ * Export: lossless stream copy, or precise re-encoding to the same codec, H.265, AV1 or a GIF (canvas
+ * Editor.dc.html), with 프레임레이트 (and GIF 크기) when re-encoding. The choices scroll with the
+ * panel; what the result will be and 내보내기 are its fixed foot (`ExportFooter`, the same props).
+ * 내보내기 adds a 작업 큐 item — its progress, cancel and result are in the header's notification
+ * center (features/notify) — and pressing it again while the item runs adds another one.
  */
 export function ExportSection(props: ExportProps) {
   const { info, choice, onChoice, editor, encoders } = props;
@@ -52,6 +59,7 @@ export function ExportSection(props: ExportProps) {
   const v = info?.video ?? null;
   const cut = editor === "cut";
   const precise = choice.mode === "precise";
+  const gif = choice.codec === "gif";
 
   const set = (patch: Partial<ExportChoice>) => onChoice({ ...choice, ...patch });
   // H.265 · AV1 need re-encoding; going back to lossless keeps the source codec (as in the mockup).
@@ -63,6 +71,16 @@ export function ExportSection(props: ExportProps) {
     return encoderFor(encoders.encoders, target) ? null : missingEncoderText(t, target);
   };
   const line = info ? encoderLine(t, info, choice, encoders.encoders) : null;
+  // A GIF needs no encoder test: its line is there at once.
+  const codecHelp = !precise
+    ? w.codecHint
+    : gif
+      ? (line ?? "")
+      : encoders.loading && !encoders.encoders
+        ? w.checkingEncoders
+        : encoders.error
+          ? say(t, encoders.error)
+          : (line ?? "");
 
   return (
     <div className="ed-section">
@@ -90,7 +108,7 @@ export function ExportSection(props: ExportProps) {
 
       <div className="ed-group" role="group" aria-label={w.codec}>
         <span className="ed-label">{w.codec}</span>
-        <div className="ed-seg">
+        <div className="ed-seg codecs">
           <button type="button" aria-pressed={choice.codec === "source"} onClick={() => pickCodec("source")}>
             <b>{w.keepCodec}</b>
             <span>{v ? codecLabel(precise ? targetCodec("source", v.codec) : v.codec) : t.queueView.streamCopy}</span>
@@ -111,15 +129,13 @@ export function ExportSection(props: ExportProps) {
               </button>
             );
           })}
+          <button type="button" aria-pressed={gif} disabled={!v} onClick={() => pickCodec("gif")}>
+            <b>GIF</b>
+            <span>{w.gifUse}</span>
+          </button>
         </div>
         <span className="ed-help">
-          {precise
-            ? encoders.loading && !encoders.encoders
-              ? w.checkingEncoders
-              : encoders.error
-                ? say(t, encoders.error)
-                : (line ?? "")
-            : w.codecHint}
+          {codecHelp}
           {cut && !v && info ? w.noVideoCut : null}
         </span>
         {precise && props.effectsOn && <span className="ed-help">{w.effectsPrecise}</span>}
@@ -136,9 +152,106 @@ export function ExportSection(props: ExportProps) {
               </button>
             ))}
           </div>
+          {gif && <span className="ed-help">{w.gifQuality[choice.quality]}</span>}
         </div>
       )}
 
+      {/* A video and a GIF keep their own rate: 직접's typing does not carry over either. */}
+      {precise && v && <FrameRateGroup key={gif ? "gif" : "video"} t={t} v={v} choice={choice} set={set} />}
+
+      {precise && gif && props.shown && <GifSizeGroup t={t} shown={props.shown} short={choice.gifShort} onShort={(gifShort) => set({ gifShort })} />}
+    </div>
+  );
+}
+
+/**
+ * 프레임레이트: 원본 · a few caps · 직접 (a typed number). A video and a GIF keep their own choice
+ * (a GIF wants far fewer frames). A cap at or above the source's rate does nothing, so its button is
+ * off, as 출력 크기's presets that would enlarge are.
+ */
+function FrameRateGroup({ t, v, choice, set }: { t: Messages; v: VideoStream; choice: ExportChoice; set: (p: Partial<ExportChoice>) => void }) {
+  const w = t.exportPanel;
+  const gif = choice.codec === "gif";
+  const [typing, setTyping] = useState(false);
+  const rate = gif ? choice.gifRate : choice.frameRate;
+  const setRate = (r: number | null) => set(gif ? { gifRate: r } : { frameRate: r });
+  const b = rateButtons(v, rate, gif, typing);
+  const source = sourceRate(v);
+  const pick = (r: number | null) => {
+    setTyping(false);
+    setRate(r);
+  };
+  return (
+    <div className="ed-group" role="group" aria-label={w.frameRate}>
+      <span className="ed-label">{w.frameRate}</span>
+      <div className="ed-seg tight">
+        <button type="button" aria-pressed={b.sourcePressed} onClick={() => pick(null)}>
+          {w.rateSource}
+        </button>
+        {b.presets.map((p) => (
+          <button
+            key={p.value}
+            type="button"
+            aria-pressed={p.pressed}
+            disabled={p.disabled}
+            title={p.disabled && source !== null ? w.rateTooHigh(rateText(source)) : undefined}
+            onClick={() => pick(p.value)}
+          >
+            {p.value}
+          </button>
+        ))}
+        <button
+          type="button"
+          aria-pressed={b.customPressed}
+          onClick={
+            b.customPressed
+              ? undefined
+              : () => {
+                  setTyping(true);
+                  setRate(b.start);
+                }
+          }
+        >
+          {w.rateCustom}
+        </button>
+      </div>
+      {b.customPressed && (
+        <div className="ed-fx-size">
+          <NumberField label={w.rateField} value={rate ?? b.start} onCommit={(n) => setRate(clampRate(n, gif))} />
+          <span aria-hidden="true">fps</span>
+        </div>
+      )}
+      <span className="ed-help">{rateNote(t, v, rate, gif)}</span>
+      {b.customPressed && <span className="ed-help">{w.rateRange(1, gif ? GIF_MAX_FRAME_RATE : MAX_FRAME_RATE)}</span>}
+    </div>
+  );
+}
+
+/** GIF 크기: 원본 · short side 480 / 360 / 240 (never larger), from the picture the 화면 효과 made. */
+function GifSizeGroup({ t, shown, short, onShort }: { t: Messages; shown: [number, number]; short: number | null; onShort: (s: number | null) => void }) {
+  const w = t.exportPanel;
+  const b = gifSizeButtons(shown, short);
+  return (
+    <div className="ed-group" role="group" aria-label={w.gifSize}>
+      <span className="ed-label">{w.gifSize}</span>
+      <div className="ed-seg tight">
+        <button type="button" aria-pressed={b.sourcePressed} onClick={() => onShort(null)}>
+          {w.rateSource}
+        </button>
+        {b.presets.map((p) => (
+          <button
+            key={p.value}
+            type="button"
+            aria-pressed={p.pressed}
+            disabled={p.disabled}
+            title={p.disabled ? w.gifSizeTooBig(b.side, p.value) : undefined}
+            onClick={() => onShort(p.value)}
+          >
+            {`${p.value}p`}
+          </button>
+        ))}
+      </div>
+      <span className="ed-help">{w.gifSizeNote(b.size[0], b.size[1])}</span>
     </div>
   );
 }
@@ -151,15 +264,14 @@ export function ExportFooter(props: ExportProps) {
   const precise = choice.mode === "precise";
   const name = info ? predictedExportName(info, choice, whole, editor) : "—";
   const size = info && length !== null && !precise ? estimateCopySize(info, length) : null;
+  const note = info ? saveNote(t, info, choice, props.picture, props.shown, size) : precise ? w.saveNotePrecise : w.saveNoteLossless(null);
   const unfinished = item !== null && (item.state === "waiting" || item.state === "running");
   return (
     <>
       <div className="ed-save">
         <span className="ed-label">{w.saveTo}</span>
         <span className="mono ed-save-name">{name}</span>
-        <span className="ed-label">
-          {precise ? (props.picture ? w.saveNotePreciseSized(props.picture[0], props.picture[1]) : w.saveNotePrecise) : w.saveNoteLossless(size)}
-        </span>
+        <span className="ed-label">{note}</span>
       </div>
 
       <button type="button" className="ed-export" disabled={!canExport || starting} onClick={props.onExport}>

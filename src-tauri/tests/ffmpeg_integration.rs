@@ -671,6 +671,36 @@ fn precise_export_keeps_sync_and_falls_back() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// The AAC the app encodes never hangs on a click after digital silence: FFmpeg 9.1's default coder
+/// re-encoded one frame of these cuts forever (command::AAC_ENCODER). Each precise trim — the click
+/// 1 s and 2 s in, where it hung — gets a minute for its 4 s, is killed after it, and keeps the click
+/// in its place.
+#[test]
+#[ignore = "needs FFmpeg 6.0+ installed"]
+fn aac_finishes_on_a_click_after_digital_silence() {
+    let ff = ffmpeg_or_panic();
+    let dir = temp_dir("aac-click");
+    let source = dir.join("알림음 클립.mp4");
+    make_clip(&ff, &source);
+    let info = probe::probe(Path::new(&ff.ffprobe_path), &source).unwrap();
+    let video = info.video.clone().unwrap();
+    let encoder = if ff.features.libx264 { "libx264" } else { "mpeg4" };
+    for into in [1.0, 2.0] {
+        let start = CLICK_AT - into;
+        let plan = command::plan_precise_trim(&info, start, start + 4.0, command::OutputCodec::Source).unwrap();
+        assert_eq!(plan.audio, command::AudioPlan::Aac);
+        let (_, part) = command::output_paths_as(&source, &plan.suffix, Some(&plan.extension));
+        let args = command::precise_trim_args(&source, &video, &plan, encoder, command::Quality::Balanced, &part).unwrap();
+        let out = util::run_capture(Path::new(&ff.ffmpeg_path), &args, Duration::from_secs(60)).unwrap();
+        assert!(!out.timed_out, "the click {into} s in: FFmpeg still running after 60 s");
+        assert!(out.success, "the click {into} s in: {}", out.stderr);
+        let click = click_time(&ff, &part);
+        assert!((click - into).abs() < 0.015, "the click {into} s in: at {click:.4} s");
+        std::fs::remove_file(&part).unwrap();
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// 10-bit HDR (PQ) sources: H.265 and AV1 stay 10-bit and keep the color description, with every
 /// encoder that works here (on a Mac also VideoToolbox's Main 10 path). One source describes its
 /// colors in the bitstream; the other only in the MKV container, so the decoded frames carry none
@@ -1484,7 +1514,16 @@ fn queue_export(
     codec: command::OutputCodec,
 ) -> godseon_clip_lib::queue::QueueItem<ExportTask> {
     let (info, kf) = opened(ff, source);
-    let req = ExportRequest { path: source.display().to_string(), edit, mode, codec, quality: command::Quality::Balanced, effects: Default::default() };
+    let req = ExportRequest {
+        path: source.display().to_string(),
+        edit,
+        mode,
+        codec,
+        quality: command::Quality::Balanced,
+        effects: Default::default(),
+        frame_rate: None,
+        gif_short: None,
+    };
     let prepared = export::prepare(ff, &info, &kf, &req, x265_only).unwrap();
     queue.add(|taken| prepared.into_task(taken)).unwrap()
 }
@@ -1507,7 +1546,7 @@ fn leftovers(dir: &Path) -> Vec<String> {
     std::fs::read_dir(dir)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|n| n.contains(".part.") || n.starts_with(".godseon-cut-"))
+        .filter(|n| n.contains(".part.") || n.starts_with(".godseon-cut-") || n.starts_with(".godseon-gif-"))
         .collect()
 }
 
@@ -1673,7 +1712,7 @@ fn convert_settings(
     suffix: &str,
 ) -> ConvertSettings {
     ConvertSettings {
-        options: command::ConvertOptions { codec, container, resolution, audio, ten_bit },
+        options: command::ConvertOptions { codec, container, resolution, audio, ten_bit, frame_rate: None },
         encoder: encoder.map(String::from),
         quality: command::Quality::Balanced,
         output_dir: output_dir.map(|d| d.display().to_string()),
@@ -2594,7 +2633,16 @@ fn export_with_effects(
 ) -> (PathBuf, export::ExportSummary, Option<effects::EffectsPlan>) {
     let (info, kf) = opened(ff, source);
     let planned = effects::plan(info.video.as_ref().unwrap(), &e).unwrap();
-    let req = ExportRequest { path: source.display().to_string(), edit, mode: ExportMode::Precise, codec, quality: command::Quality::High, effects: e };
+    let req = ExportRequest {
+        path: source.display().to_string(),
+        edit,
+        mode: ExportMode::Precise,
+        codec,
+        quality: command::Quality::High,
+        effects: e,
+        frame_rate: None,
+        gif_short: None,
+    };
     let prepared = export::prepare(ff, &info, &kf, &req, report).unwrap();
     let summary = prepared.summary().clone();
     let task = prepared.into_task(&|_| false).unwrap();
@@ -3632,6 +3680,420 @@ fn all_effects_together_land_where_and_when_drawn() {
         }
         std::fs::remove_file(&source).unwrap();
     }
+    assert!(leftovers(&dir).is_empty(), "{:?}", leftovers(&dir));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+// ---------------------------------------------------------------------------------------------
+// GIF · 프레임레이트
+
+fn export_request(source: &Path, edit: Edit, codec: command::OutputCodec, quality: command::Quality, frame_rate: Option<u32>, gif_short: Option<u32>) -> ExportRequest {
+    ExportRequest {
+        path: source.display().to_string(),
+        edit,
+        mode: ExportMode::Precise,
+        codec,
+        quality,
+        effects: Default::default(),
+        frame_rate,
+        gif_short,
+    }
+}
+
+/// Which source frame each output frame is (the nearest of every source frame, as shown).
+fn picked_frames(ff: &ffmpeg::FfmpegInfo, shown: &[Vec<u8>], out: &Path) -> Vec<usize> {
+    picked_every(ff, shown, out, 1)
+}
+
+/// [`picked_frames`] for every `stride`-th output frame only (the comparison is slow in a debug build).
+fn picked_every(ff: &ffmpeg::FfmpegInfo, shown: &[Vec<u8>], out: &Path, stride: usize) -> Vec<usize> {
+    small_frames(ff, out).iter().step_by(stride).map(|f| nearest(shown, f)).collect()
+}
+
+/// 편집기 → GIF through the app's queue, in a folder whose name has a `%` and Hangul: 자르기 at 5 fps,
+/// 구간 제거 at 5 fps made smaller, the whole file at 원본 (25 fps). Every GIF frame is the source
+/// frame at its time (frame-exact like 정밀), lasts 1/fps, the GIF loops, and neither the palette's
+/// scratch folder nor a `.part` stays.
+#[test]
+#[ignore = "needs FFmpeg 6.0+ installed"]
+fn gif_exports_show_the_frames_asked_for_at_their_times_and_leave_nothing() {
+    let ff = ffmpeg_or_panic();
+    let dir = temp_dir("gif").join("움짤 100%");
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("여행 클립.mp4");
+    make_clip(&ff, &source);
+    let shown = small_frames(&ff, &source);
+    assert_eq!(shown.len(), 250);
+    let (info, kf) = opened(&ff, &source);
+    let (queue, _jobs, rx) = new_queue(2);
+    let add = |edit: Edit, quality, frame_rate, gif_short| {
+        let req = export_request(&source, edit, command::OutputCodec::Gif, quality, frame_rate, gif_short);
+        let prepared = export::prepare(&ff, &info, &kf, &req, || panic!("a GIF needs no encoder test")).unwrap();
+        queue.add(|taken| prepared.into_task(taken)).unwrap()
+    };
+    let trim = add(Edit::Trim { start: 2.0, end: 5.0 }, command::Quality::Balanced, Some(5), None);
+    let cut = add(Edit::Cut { removed: vec![plan::Range::new(3.0, 6.0)] }, command::Quality::Small, Some(5), Some(120));
+    let whole = add(Edit::Trim { start: 0.0, end: 10.0 }, command::Quality::High, None, None);
+    assert_eq!((trim.info.summary.frame_rate, cut.info.summary.picture, whole.info.summary.frame_rate), (Some(5.0), Some([160, 120]), Some(25.0)));
+    let s = wait_queue(&rx, "three GIFs", |s| s.items.iter().all(|i| i.state.finished()));
+    for item in &s.items {
+        assert_eq!(item.state, ItemState::Done, "{:?} {:?}", item.error, item.log);
+    }
+    let output = |id: u64| PathBuf::from(&item_of(&s, id).output);
+    let check = |out: &Path, name: &str, size: &str, expected: Vec<usize>, step: f64, stride: usize| {
+        assert_eq!(out.file_name().unwrap().to_string_lossy(), name);
+        assert_eq!(stream_fields(&ff, out, "v:0", "stream=codec_name,width,height"), format!("codec_name=gif {size}"));
+        let times: Vec<f64> = video_frames(&ff, out, None).into_iter().map(|(t, _)| t).collect();
+        assert_eq!(times.len(), expected.len(), "{name}: frames");
+        for (k, t) in times.iter().enumerate() {
+            assert!((t - step * k as f64).abs() < 0.006, "{name}: frame {k} at {t}");
+        }
+        let sampled: Vec<usize> = expected.iter().copied().step_by(stride).collect();
+        assert_eq!(picked_every(&ff, &shown, out, stride), sampled, "{name}: which source frames");
+        let bytes = std::fs::read(out).unwrap();
+        assert!(bytes.windows(11).any(|w| w == b"NETSCAPE2.0"), "{name}: loops");
+        bytes.len()
+    };
+    // 2.0 – 5.0 s at 5 fps: source frames #50, #55 … #120.
+    check(&output(trim.id), "여행 클립_trim.gif", "height=240 width=320", (0..15).map(|k| 50 + 5 * k).collect(), 0.2, 1);
+    // 3.0 – 6.0 s removed: #0 … #70, then #150 … #245, at 160 × 120.
+    let joined: Vec<usize> = (0..15).map(|k| 5 * k).chain((0..20).map(|k| 150 + 5 * k)).collect();
+    check(&output(cut.id), "여행 클립_cut.gif", "height=120 width=160", joined, 0.2, 1);
+    // The whole file at its own 25 fps: every frame, named after the original.
+    check(&output(whole.id), "여행 클립.gif", "height=240 width=320", (0..250).collect(), 0.04, 23);
+
+    // With 화면 효과: a crop, a mosaic box and a logo on the 자르기, 10 fps — the same graph as 정밀
+    // with the palette after it.
+    let logo = dir.join("로고.png");
+    run_ok(&ff, &[os_args(&["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=64x32", "-frames:v", "1"]), vec![logo.as_os_str().to_owned()]].concat());
+    let mut req = export_request(&source, Edit::Trim { start: 1.0, end: 3.0 }, command::OutputCodec::Gif, command::Quality::Balanced, Some(10), None);
+    req.effects = effects::Effects {
+        crop: Some(effects::Crop { x: 40, y: 0, width: 240, height: 240, ratio: None }),
+        masks: vec![effects::Mask { x: 100, y: 100, width: 64, height: 64, start: 0.0, end: 10.0, kind: effects::MaskKind::Mosaic, strength: 50 }],
+        overlays: vec![effects::Overlay {
+            path: logo.display().to_string(), x: 200, y: 8, width: 64, height: 32, start: 0.0, end: 10.0, offset: 0.0, opacity: 100, audio: false, volume: 100,
+        }],
+        ..Default::default()
+    };
+    let prepared = export::prepare(&ff, &info, &kf, &req, || panic!("no encoder test")).unwrap();
+    assert_eq!((prepared.summary().picture, prepared.summary().masks, prepared.summary().overlays), (Some([240, 240]), 1, 1));
+    let fx = queue.add(|taken| prepared.into_task(taken)).unwrap();
+    let s = wait_queue(&rx, "GIF with effects", |s| item_of(s, fx.id).state.finished());
+    assert_eq!(item_of(&s, fx.id).state, ItemState::Done, "{:?} {:?}", item_of(&s, fx.id).error, item_of(&s, fx.id).log);
+    // (`output` reads the snapshot before this item finished.)
+    let out = PathBuf::from(&item_of(&s, fx.id).output);
+    assert_eq!(stream_fields(&ff, &out, "v:0", "stream=codec_name,width,height"), "codec_name=gif height=240 width=240");
+    assert_eq!(video_frames(&ff, &out, None).len(), 20);
+    // The logo's red is at its spot after the crop (x 200 − 40).
+    let px = rgb_frame(&ff, out.as_os_str(), None, false);
+    let at = |x: usize, y: usize| &px[(y * 240 + x) * 3..(y * 240 + x) * 3 + 3];
+    assert!(at(160 + 32, 8 + 16)[0] > 200 && at(160 + 32, 8 + 16)[1] < 60, "{:?}", at(192, 24));
+    assert!(leftovers(&dir).is_empty(), "{:?}", leftovers(&dir));
+    std::fs::remove_dir_all(dir.parent().unwrap()).unwrap();
+}
+
+/// 프레임레이트 on a video: 정밀 at 5 fps keeps every fifth source frame at its own time and the
+/// sound in sync; 일괄 변환 at 5 fps the same over the whole file; a cap at the source's rate
+/// changes nothing.
+#[test]
+#[ignore = "needs FFmpeg 6.0+ installed"]
+fn frame_rate_cap_keeps_every_nth_frame_and_the_sound_in_sync() {
+    let ff = ffmpeg_or_panic();
+    let dir = temp_dir("fps");
+    let source = dir.join("클릭 25fps.mp4");
+    make_clip(&ff, &source);
+    let shown = small_frames(&ff, &source);
+    let (info, kf) = opened(&ff, &source);
+    let (queue, _jobs, rx) = new_queue(1);
+    let req = export_request(&source, Edit::Trim { start: 1.0, end: 6.0 }, command::OutputCodec::Source, command::Quality::High, Some(5), None);
+    let prepared = export::prepare(&ff, &info, &kf, &req, software_report).unwrap();
+    assert_eq!(prepared.summary().frame_rate, Some(5.0));
+    let item = queue.add(|taken| prepared.into_task(taken)).unwrap();
+    let s = wait_queue(&rx, "export at 5 fps", |s| item_of(s, item.id).state.finished());
+    assert_eq!(item_of(&s, item.id).state, ItemState::Done, "{:?}", item_of(&s, item.id).log);
+    let out = PathBuf::from(&item_of(&s, item.id).output);
+    assert_eq!(picked_frames(&ff, &shown, &out), (0..25).map(|k| 25 + 5 * k).collect::<Vec<_>>());
+    assert!(stream_fields(&ff, &out, "v:0", "stream=r_frame_rate").contains("r_frame_rate=5/1"));
+    let click = click_time(&ff, &out);
+    assert!((click - (CLICK_AT - 1.0)).abs() < 0.03, "click at {click}");
+
+    // A cap at the source's 25 fps: the export as it was.
+    let same = export_request(&source, Edit::Trim { start: 1.0, end: 6.0 }, command::OutputCodec::Source, command::Quality::High, Some(25), None);
+    assert_eq!(export::prepare(&ff, &info, &kf, &same, software_report).unwrap().summary().frame_rate, None);
+
+    // 일괄 변환 to H.265 at 5 fps.
+    let mut settings = convert_settings(
+        command::VideoCodec::Hevc, command::Container::Mkv, command::Resolution::Source, command::AudioChoice::CopyOrAac, false, Some("libx265"), None, "_5fps",
+    );
+    settings.options.frame_rate = Some(5);
+    let choice = encoders::pick(&software_report(), command::VideoCodec::Hevc, Some("libx265")).unwrap();
+    let prepared = convert::prepare(&ff, &source.display().to_string(), &info, &settings, &choice).unwrap();
+    assert_eq!(prepared.task().summary.frame_rate, Some(5.0));
+    let task = prepared.into_task(&|_| false).unwrap();
+    let queue::Work::Attempts { attempts, total_secs } = task.work else { panic!("one run") };
+    let finished = run_attempts(&ff, attempts, total_secs, &task.part, &task.final_path);
+    assert!(finished.ok, "{:?} {:?}", finished.error, finished.log);
+    let converted = PathBuf::from(finished.output.unwrap());
+    assert_eq!(picked_frames(&ff, &shown, &converted), (0..50).map(|k| 5 * k).collect::<Vec<_>>());
+    let click = click_time(&ff, &converted);
+    assert!((click - CLICK_AT).abs() < 0.03, "click at {click}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The frame on screen at `t` (seconds): the last of the sorted `times` at or before it. The margin
+/// is far below the nearest a frame of these sources comes to a k / fps step without being on it
+/// (33 µs at 29.97 against 1/15 · 1/20) and above the result's 1/90000 s rounding.
+fn on_screen(times: &[f64], t: f64) -> usize {
+    times.iter().rposition(|&s| s <= t + 1e-5).unwrap_or_else(|| panic!("no frame at or before {t}"))
+}
+
+/// Which of the source frames `candidates` `frame` is (a few around the expected one: comparing with
+/// every source frame is slow in a debug build).
+fn nearest_of(source: &[Vec<u8>], frame: &[u8], candidates: std::ops::Range<usize>) -> usize {
+    let sad = |a: &[u8]| a.iter().zip(frame).map(|(x, y)| u64::from(x.abs_diff(*y))).sum::<u64>();
+    candidates.min_by_key(|&i| sad(&source[i])).unwrap()
+}
+
+/// Frame times from the first frame's, in seconds.
+fn times_from_first(frames: Vec<(f64, String)>) -> Vec<f64> {
+    let t0 = frames.first().expect("frames").0;
+    frames.into_iter().map(|(t, _)| t - t0).collect()
+}
+
+/// 프레임레이트 on sources whose frames do not fall on the new grid — NTSC 29.97, film 23.976 and a
+/// variable rate, B-frame MP4 and MKV (MKV stores whole milliseconds) — for a 자르기 and a 구간
+/// 제거: frame k of a capped 정밀 export (H.265 at 20 fps) and of a GIF (15 · 10 fps) is the frame
+/// the same export without a cap shows at k / fps, and lands at k / fps (a GIF within its 1/100 s
+/// steps). The uncapped export is the timeline: a 구간 제거's joins are where `concat` puts them.
+#[test]
+#[ignore = "needs FFmpeg 6.0+ installed"]
+fn frame_rate_caps_show_the_frame_on_screen_at_ntsc_film_and_variable_rates() {
+    let ff = ffmpeg_or_panic();
+    assert!(ff.features.libx264 && ff.features.libx265, "this test needs libx264 (its sources) and libx265");
+    let ffprobe = PathBuf::from(&ff.ffprobe_path);
+    let dir = temp_dir("rate-caps");
+    let (queue, _jobs, rx) = new_queue(2);
+    let sources = [
+        ("29.97fps", "30000/1001", None, "30"),
+        ("23.976fps", "24000/1001", None, "24"),
+        ("가변", "60", Some(r"select='lt(mod(n\,5)\,3)'"), "36"),
+    ];
+    for (rate_label, rate, select, gop) in sources {
+        for source in make_rate_sources(&ff, &dir, rate_label, rate, select, gop) {
+            let name = source.file_name().unwrap().to_string_lossy().into_owned();
+            // As probe_media does: the editor's frame starts come from these.
+            let mut info = probe::probe(&ffprobe, &source).unwrap();
+            let times = probe::frame_times(&ffprobe, &source, info.video.as_ref().unwrap().index).unwrap();
+            probe::measure_frame_rate(info.video.as_mut().unwrap(), times.frames.clone());
+            let video = info.video.clone().unwrap();
+            let small = small_frames(&ff, &source);
+            let n = small.len();
+            let fps = video.fps.expect("fps");
+            let at = |k: usize| video.frame_times.as_ref().map_or(k as f64 / fps, |t| t[k]);
+            let (first, a, b, stop) = (n * 30 / 100, n * 45 / 100, n * 60 / 100, n * 85 / 100);
+            let removed = vec![plan::Range::new(0.0, at(first)), plan::Range::new(at(a), at(b)), plan::Range::new(at(stop), info.duration)];
+            let edits = [
+                ("자르기", Edit::Trim { start: at(first), end: at(stop) }, (first..stop).collect::<Vec<_>>(), 15),
+                ("구간 제거", Edit::Cut { removed }, (first..a).chain(b..stop).collect(), 10),
+            ];
+            for (what, edit, kept, gif_rate) in edits {
+                let export = |codec, cap: Option<u32>| {
+                    let req = export_request(&source, edit.clone(), codec, command::Quality::Balanced, cap, None);
+                    let prepared = export::prepare(&ff, &info, &times.keyframes, &req, software_report).unwrap();
+                    let item = queue.add(|taken| prepared.into_task(taken)).unwrap();
+                    let s = wait_queue(&rx, &format!("{name} {what}"), |s| item_of(s, item.id).state.finished());
+                    let done = item_of(&s, item.id);
+                    assert_eq!(done.state, ItemState::Done, "{name} {what} {codec:?} {cap:?}: {:?} {:?}", done.error, done.log);
+                    PathBuf::from(&done.output)
+                };
+                let reference = export(command::OutputCodec::Hevc, None);
+                let timeline = times_from_first(frames_by_pts(&ff, &reference));
+                assert_eq!(timeline.len(), kept.len(), "{name} {what}: the export without a cap");
+                let length = probe::probe(&ffprobe, &reference).unwrap().duration;
+                for (codec, cap, slack) in [(command::OutputCodec::Hevc, 20, 0.001), (command::OutputCodec::Gif, gif_rate, 0.006)] {
+                    let label = format!("{name} {what} → {codec:?} {cap} fps");
+                    let out = export(codec, Some(cap));
+                    let r = f64::from(cap);
+                    let out_times = times_from_first(frames_by_pts(&ff, &out));
+                    let frames = small_frames(&ff, &out);
+                    assert_eq!(out_times.len(), frames.len(), "{label}");
+                    let count = frames.len() as f64;
+                    assert!(count >= (length * r).floor() && count <= (length * r).ceil() + 1.0, "{label}: {count} frames for {length:.4} s");
+                    for (k, (t, frame)) in out_times.iter().zip(&frames).enumerate() {
+                        let step = k as f64 / r;
+                        assert!((t - step).abs() < slack, "{label}: frame {k} at {t:.4}, want {step:.4}");
+                        let want = kept[on_screen(&timeline, step)];
+                        let got = nearest_of(&small, frame, want.saturating_sub(3)..(want + 4).min(n));
+                        assert_eq!(got, want, "{label}: frame {k} at {step:.4} s");
+                    }
+                    std::fs::remove_file(&out).unwrap();
+                }
+                std::fs::remove_file(&reference).unwrap();
+            }
+        }
+    }
+    assert!(leftovers(&dir).is_empty(), "{:?}", leftovers(&dir));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Every video frame decoded to `w` × `h` RGB (an area average: a GIF's dithering cancels out at a
+/// fraction of its size), in display order; `matrix` reads the source with that YUV matrix. RGB
+/// first, then smaller: `scale` straight from 4:2:0 to a small RGB picture came out 11 values off
+/// the same frame made RGB first (FFmpeg 9.1), more than a GIF's palette is.
+fn frames_at_size(ff: &ffmpeg::FfmpegInfo, file: &Path, w: usize, h: usize, matrix: Option<&str>) -> Vec<Vec<u8>> {
+    let mut args = os_args(&["-hide_banner", "-nostdin", "-loglevel", "error", "-i"]);
+    args.push(file.as_os_str().to_owned());
+    let scale = match matrix {
+        Some(m) => format!("scale=in_color_matrix={m}:in_range=tv,format=rgb24,scale={w}:{h}:flags=area"),
+        None => format!("format=rgb24,scale={w}:{h}:flags=area"),
+    };
+    args.extend(os_args(&["-map", "0:v:0", "-vf", &scale, "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]));
+    run_ok(ff, &args).stdout_raw.chunks_exact(w * h * 3).map(<[u8]>::to_vec).collect()
+}
+
+/// Mean absolute difference per byte (channel value) of two RGB pictures, 0–255.
+fn mean_byte_diff(a: &[u8], b: &[u8]) -> f64 {
+    assert_eq!(a.len(), b.len());
+    a.iter().zip(b).map(|(x, y)| f64::from(x.abs_diff(*y))).sum::<f64>() / a.len() as f64
+}
+
+/// The mean RGB of the `w`-wide picture's rectangle (x0, y0) – (x1, y1).
+fn mean_rgb(px: &[u8], w: usize, (x0, y0, x1, y1): (usize, usize, usize, usize)) -> [f64; 3] {
+    let mut sum = [0.0; 3];
+    for y in y0..y1 {
+        for x in x0..x1 {
+            for (c, s) in sum.iter_mut().enumerate() {
+                *s += f64::from(px[(y * w + x) * 3 + c]);
+            }
+        }
+    }
+    sum.map(|s| s / ((x1 - x0) * (y1 - y0)) as f64)
+}
+
+/// 10-bit PQ (BT.2020) → GIF: 8 bits, 256 colors, no tone mapping — the panel says it looks washed
+/// out. Its colors are what a plain BT.2020 conversion of the source shows (limited range, the
+/// BT.2020 matrix, no PQ curve), for a source that tags its frames and for one only its MKV tags:
+/// the app's `setparams` is what tells the palette's RGB conversion the matrix. Four flat blocks
+/// whose colors the BT.601 matrix (FFmpeg's guess for an untagged frame) would visibly shift.
+#[test]
+#[ignore = "needs FFmpeg 6.0+ installed"]
+fn hdr_gif_shows_the_colors_of_a_plain_bt2020_conversion() {
+    let ff = ffmpeg_or_panic();
+    assert!(ff.features.libx265, "this test needs libx265 for its source clips");
+    let dir = temp_dir("hdr-gif");
+    let blocks = "color=c=0xE01818:s=160x120:r=10:d=2[a];color=c=0x18E018:s=160x120:r=10:d=2[b];\
+                  color=c=0x1818E0:s=160x120:r=10:d=2[c];color=c=0xA0A0A0:s=160x120:r=10:d=2[d];\
+                  [a][b]hstack[t];[c][d]hstack[u];[t][u]vstack,format=yuv420p10le";
+    let make_source = |path: &Path, tags: &str| {
+        let mut make = os_args(&["-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-filter_complex"]);
+        make.push(format!("{blocks}{tags}[v]").into());
+        make.extend(os_args(&["-map", "[v]", "-c:v", "libx265", "-x265-params", "log-level=error", "-pix_fmt", "yuv420p10le"]));
+        make.push(path.as_os_str().to_owned());
+        run_ok(&ff, &make);
+    };
+    let tagged = dir.join("HDR 색 블록.mkv");
+    make_source(&tagged, ",setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc");
+    let untagged = dir.join("HDR 색 정보 없음.mkv");
+    make_source(&untagged, "");
+    let container_only = dir.join("HDR 컨테이너만 표시.mkv");
+    let mut remux = os_args(&["-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i"]);
+    remux.push(untagged.as_os_str().to_owned());
+    remux.extend(os_args(&["-c", "copy", "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc"]));
+    remux.push(container_only.as_os_str().to_owned());
+    run_ok(&ff, &remux);
+
+    let (queue, _jobs, rx) = new_queue(1);
+    let centers = [(40, 30, 120, 90), (200, 30, 280, 90), (40, 150, 120, 210), (200, 150, 280, 210)];
+    let off = |a: [f64; 3], b: [f64; 3]| a.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0, f64::max);
+    for source in [&tagged, &container_only] {
+        let name = source.file_name().unwrap().to_string_lossy().into_owned();
+        let (info, kf) = opened(&ff, source);
+        assert!(info.video.as_ref().unwrap().hdr, "{name}");
+        let req = export_request(source, Edit::Trim { start: 0.5, end: 1.5 }, command::OutputCodec::Gif, command::Quality::Balanced, Some(10), None);
+        let prepared = export::prepare(&ff, &info, &kf, &req, || panic!("a GIF needs no encoder test")).unwrap();
+        assert!(!prepared.summary().ten_bit, "{name}: a GIF is 8 bits");
+        let item = queue.add(|taken| prepared.into_task(taken)).unwrap();
+        let s = wait_queue(&rx, &name, |s| item_of(s, item.id).state.finished());
+        let done = item_of(&s, item.id);
+        assert_eq!(done.state, ItemState::Done, "{name}: {:?} {:?}", done.error, done.log);
+        let out = PathBuf::from(&done.output);
+        assert_eq!(stream_fields(&ff, &out, "v:0", "stream=codec_name,width,height"), "codec_name=gif height=240 width=320", "{name}");
+        let gif = frames_at_size(&ff, &out, 320, 240, None);
+        assert_eq!(gif.len(), 10, "{name}: 1 s at 10 fps");
+        let bt2020 = &frames_at_size(&ff, source, 320, 240, Some("bt2020"))[0];
+        let bt601 = &frames_at_size(&ff, source, 320, 240, Some("bt601"))[0];
+        let mut apart: f64 = 0.0;
+        for (i, rect) in centers.into_iter().enumerate() {
+            let (got, want, wrong) = (mean_rgb(&gif[0], 320, rect), mean_rgb(bt2020, 320, rect), mean_rgb(bt601, 320, rect));
+            assert!(off(got, want) <= 6.0, "{name} block {i}: GIF {got:?}, BT.2020 {want:?} (BT.601 {wrong:?})");
+            apart = apart.max(off(want, wrong));
+        }
+        assert!(apart > 20.0, "the blocks must tell the matrices apart: at most {apart:.1}");
+        // Every frame the same flat blocks: the palette holds for the whole clip.
+        for (k, frame) in gif.iter().enumerate() {
+            assert!(mean_byte_diff(frame, &gif[0]) < 1.0, "{name}: frame {k} differs from frame 0");
+        }
+        std::fs::remove_file(&out).unwrap();
+    }
+    assert!(leftovers(&dir).is_empty(), "{:?}", leftovers(&dir));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The GIF 품질 presets (`command::gif_palette`): 고화질 and 균형 keep up to 256 colors, 작은 용량 128
+/// and is the smallest file; every frame of each — 균형 and 작은 용량 rewrite only the changed
+/// rectangle — is the source frame at its time with its colors within a few values once the
+/// dithering is averaged out, and 고화질 is never further from the source than 작은 용량.
+#[test]
+#[ignore = "needs FFmpeg 6.0+ installed"]
+fn gif_presets_trade_colors_for_size_and_keep_every_frame_whole() {
+    let ff = ffmpeg_or_panic();
+    let dir = temp_dir("gif-presets");
+    let source = dir.join("품질 비교 클립.mp4");
+    make_clip(&ff, &source);
+    let (info, kf) = opened(&ff, &source);
+    let (queue, _jobs, rx) = new_queue(3);
+    // 2.0 – 4.0 s at 10 fps: source frame #50 + ⌊2.5 k⌋ (25 fps).
+    let expected: Vec<usize> = (0..20).map(|k| 50 + k * 5 / 2).collect();
+    let source_tiny = frames_at_size(&ff, &source, 40, 30, None);
+    let source_small = small_frames(&ff, &source);
+    let mut items = Vec::new();
+    for quality in [command::Quality::High, command::Quality::Balanced, command::Quality::Small] {
+        let req = export_request(&source, Edit::Trim { start: 2.0, end: 4.0 }, command::OutputCodec::Gif, quality, Some(10), None);
+        let prepared = export::prepare(&ff, &info, &kf, &req, || panic!("a GIF needs no encoder test")).unwrap();
+        items.push((quality, queue.add(|taken| prepared.into_task(taken)).unwrap().id));
+    }
+    let s = wait_queue(&rx, "three GIFs", |s| s.items.iter().all(|i| i.state.finished()));
+    let mut measured = Vec::new();
+    for (quality, id) in items {
+        let done = item_of(&s, id);
+        assert_eq!(done.state, ItemState::Done, "{quality:?}: {:?} {:?}", done.error, done.log);
+        let out = PathBuf::from(&done.output);
+        let bytes = std::fs::metadata(&out).unwrap().len();
+        let full = frames_at_size(&ff, &out, 320, 240, None);
+        assert_eq!(full.len(), expected.len(), "{quality:?}: frames");
+        let colors = full.iter().map(|f| f.chunks_exact(3).collect::<std::collections::HashSet<_>>().len()).max().unwrap();
+        let picked: Vec<usize> =
+            small_frames(&ff, &out).iter().zip(&expected).map(|(f, &e)| nearest_of(&source_small, f, e.saturating_sub(3)..e + 4)).collect();
+        assert_eq!(picked, expected, "{quality:?}: which source frames");
+        let errors: Vec<f64> =
+            frames_at_size(&ff, &out, 40, 30, None).iter().zip(&expected).map(|(f, &e)| mean_byte_diff(f, &source_tiny[e])).collect();
+        let worst = errors.iter().cloned().fold(0.0, f64::max);
+        let mean = errors.iter().sum::<f64>() / errors.len() as f64;
+        eprintln!("{quality:?}: {bytes} bytes, at most {colors} colors in a frame, error mean {mean:.2} worst {worst:.2}");
+        measured.push((bytes, colors, mean, worst));
+        std::fs::remove_file(&out).unwrap();
+    }
+    let [(high_bytes, high_colors, high_mean, high_worst), (balanced_bytes, balanced_colors, _, balanced_worst), (small_bytes, small_colors, small_mean, small_worst)] =
+        measured[..]
+    else {
+        panic!("three presets")
+    };
+    assert!(high_colors <= 256 && balanced_colors <= 256 && small_colors <= 128, "colors {high_colors} · {balanced_colors} · {small_colors}");
+    assert!(small_colors < high_colors, "작은 용량 uses fewer colors: {small_colors} vs {high_colors}");
+    assert!(small_bytes < high_bytes && small_bytes < balanced_bytes, "sizes {high_bytes} · {balanced_bytes} · {small_bytes}");
+    // Measured (FFmpeg 9.1): 0.32 · 0.34 · 0.93 at worst, 0.28 · 0.30 · 0.88 on average; 291 · 276 · 223 kB.
+    assert!(high_worst <= 1.0 && balanced_worst <= 1.0 && small_worst <= 2.0, "worst errors {high_worst:.2} · {balanced_worst:.2} · {small_worst:.2}");
+    assert!(high_mean <= small_mean, "고화질 {high_mean:.2} vs 작은 용량 {small_mean:.2}");
     assert!(leftovers(&dir).is_empty(), "{:?}", leftovers(&dir));
     std::fs::remove_dir_all(&dir).unwrap();
 }

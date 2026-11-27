@@ -1,7 +1,8 @@
 // The header's notification center (2026-11-24, user request): a bell in every screen's header that
 // opens a panel over the screen with the queue's running items (progress · cancel), the waiting ones
 // and the last that finished (show in folder). Finished items the user has not opened the panel for
-// mark the bell (orange when one failed). The queue screen keeps the full list and the logs.
+// mark the bell (orange when one failed). The queue screen keeps the full list and the logs. The
+// editor's 내보내기 opens the panel too (`useOpenNotify`).
 
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
@@ -38,6 +39,16 @@ export function NotifyProvider({ queue, openQueue, children }: { queue: QueueSta
   }, [open, last]);
   const value: NotifyState = { queue, openQueue, open, setOpen, seenOrder };
   return <NotifyContext.Provider value={value}>{children}</NotifyContext.Provider>;
+}
+
+/**
+ * Opens the panel: what 내보내기 does once its item is in the queue (2026-11-27, user request), so
+ * the export shows where its progress, cancel and result are. It stays open until a click outside
+ * or Escape, as when the bell opens it.
+ */
+export function useOpenNotify(): () => void {
+  const setOpen = useContext(NotifyContext)?.setOpen;
+  return useCallback(() => setOpen?.(true), [setOpen]);
 }
 
 /** The bell and its panel, a cell of the header strip (TopBar). */

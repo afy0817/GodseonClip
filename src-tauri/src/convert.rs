@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvertSettings {
-    /// 출력 코덱 · 컨테이너 · 해상도 · 오디오 · 10비트.
+    /// 출력 코덱 · 컨테이너 · 해상도 · 프레임레이트 · 오디오 · 10비트.
     #[serde(flatten)]
     pub options: ConvertOptions,
     /// None: "자동" (hardware first, then software). Some: an encoder `encoder_options` offered.
@@ -58,6 +58,8 @@ pub struct ConvertSummary {
     pub hdr: bool,
     /// Made smaller, to [width, height] as shown; None: the source size.
     pub scaled: Option<[u32; 2]>,
+    /// Brought down to this many frames per second; None: every frame of the source.
+    pub frame_rate: Option<f64>,
     pub audio: AudioOut,
     pub container: Container,
 }
@@ -126,6 +128,7 @@ pub fn prepare(ff: &FfmpegInfo, path: &str, info: &MediaInfo, settings: &Convert
             ten_bit: plan.ten_bit,
             hdr: video.hdr,
             scaled,
+            frame_rate: plan.fps,
             audio: plan.audio,
             container: plan.container,
         },
@@ -154,8 +157,8 @@ impl Prepared {
     pub fn settings_key(&self) -> String {
         let p = &self.plan;
         format!(
-            "{}|{:?}|{:?}|{:?}|{}|{:?}|{:?}|{:?}",
-            self.choice.name, self.choice.fallback, self.quality, p.codec, p.ten_bit, p.scale, p.audio, p.container
+            "{}|{:?}|{:?}|{:?}|{}|{:?}|{:?}|{:?}|{:?}",
+            self.choice.name, self.choice.fallback, self.quality, p.codec, p.ten_bit, p.fps, p.scale, p.audio, p.container
         )
     }
 
@@ -546,7 +549,7 @@ mod tests {
 
     fn settings(codec: VideoCodec, container: Container, output_dir: Option<&str>, suffix: &str) -> ConvertSettings {
         ConvertSettings {
-            options: ConvertOptions { codec, container, resolution: Resolution::P1080, audio: AudioChoice::CopyOrAac, ten_bit: false },
+            options: ConvertOptions { codec, container, resolution: Resolution::P1080, audio: AudioChoice::CopyOrAac, ten_bit: false, frame_rate: None },
             encoder: None,
             quality: Quality::Balanced,
             output_dir: output_dir.map(String::from),
